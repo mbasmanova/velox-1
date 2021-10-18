@@ -203,6 +203,35 @@ TEST_F(ArrayDistinctTest, floatArrays) {
   testFloatingPoint<double>();
 }
 
+TEST_F(ArrayDistinctTest, xxx) {
+  auto a = makeFlatVector<int32_t>(4, [](auto row) { return row; });
+  auto b = makeArrayVector<int32_t>({
+      {1, 2, 3},
+      {1, 2, 3, 4},
+      {1, 2, 3, 4, 5},
+      {1, 2, 3, 4, 5, 6},
+  });
+
+  auto c = makeArrayVector<int32_t>({
+      {0, 1, 2, 3},
+      {0, 1, 2, 3, 4},
+      {0, 1, 2, 3, 4, 5},
+      {0, 1, 2, 3, 4, 5, 6},
+  });
+
+  auto expected = makeArrayVector<int32_t>({
+      {1, 2, 3},
+      {0, 1, 2, 3, 4},
+      {1, 2, 3, 4, 5},
+      {0, 1, 2, 3, 4, 5, 6},
+  });
+
+  auto result = evaluate<ArrayVector>(
+      "if(c0 % 2 = 0, array_distinct(c1), array_distinct(c2))",
+      makeRowVector({a, b, c}));
+  assertEqualVectors(expected, result);
+}
+
 // Test inline (short) strings.
 TEST_F(ArrayDistinctTest, inlineStringArrays) {
   using S = StringView;
