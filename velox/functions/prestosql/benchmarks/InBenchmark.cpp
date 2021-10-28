@@ -27,15 +27,14 @@ using namespace facebook::velox::test;
 namespace {
 
 /// Fast implementation of IN (a, b, c,..) using F14FastSet.
-VectorPtr fastIn(
-    const folly::F14FastSet<int32_t>& inSet,
-    const VectorPtr& data) {
+template <typename T>
+VectorPtr fastIn(const folly::F14FastSet<T>& inSet, const VectorPtr& data) {
   const auto numRows = data->size();
   auto result = std::static_pointer_cast<FlatVector<bool>>(
       BaseVector::create(BOOLEAN(), numRows, data->pool()));
-  auto rawResults = result->mutableRawValues<int32_t>();
+  auto rawResults = result->mutableRawValues<T>();
 
-  auto rawData = data->asUnchecked<FlatVector<int32_t>>()->rawValues();
+  auto rawData = data->asUnchecked<FlatVector<T>>()->rawValues();
   for (auto row = 0; row < numRows; ++row) {
     bits::setBit(rawResults, row, inSet.contains(rawData[row]));
   }
@@ -49,21 +48,69 @@ class InBenchmark : public functions::test::FunctionBenchmarkBase {
     functions::registerVectorFunctions();
   }
 
-  RowVectorPtr makeData() {
+  RowVectorPtr makeData(const TypePtr& type) {
     VectorFuzzer::Options opts;
     opts.vectorSize = 1'000;
-    return vectorMaker_.rowVector(
-        {VectorFuzzer(opts, pool()).fuzzFlat(INTEGER())});
+    return vectorMaker_.rowVector({VectorFuzzer(opts, pool()).fuzzFlat(type)});
+  }
+
+  folly::F14FastSet<StringView> makeInListStrings(
+      FlatVector<StringView>* strings,
+      size_t numValues) {
+    folly::F14FastSet<StringView> inSet;
+    inSet.reserve(numValues);
+
+    // Add half of the strings from 'strings' to ensure at least that many will
+    // match the IN filter.
+    auto rawStrings = strings->rawValues();
+    for (auto i = 0; i < numValues && i < strings->size() / 2; i++) {
+      auto index = i * 2;
+      if (!strings->isNullAt(index)) {
+        inSet.emplace(rawStrings[index]);
+      }
+    }
+
+    // Add more strings.
+    for (auto i = inSet.size(); i < numValues; ++i) {
+      inSet.insert(StringView(fmt::format("{}", i)));
+    }
+
+    return inSet;
   }
 
   void run(size_t numValues) {
     folly::BenchmarkSuspender suspender;
-    auto data = makeData();
+    auto data = makeData(INTEGER());
 
     std::ostringstream inList;
     inList << "0";
     for (auto i = 1; i < numValues; ++i) {
       inList << ", " << i * 2;
+    }
+
+    auto sql = fmt::format("c0 IN ({})", inList.str());
+    auto exprSet = compileExpression(sql, data->type());
+    suspender.dismiss();
+
+    doRun(exprSet, data);
+  }
+
+  void runStrings(size_t numValues) {
+    folly::BenchmarkSuspender suspender;
+    auto data = makeData(VARCHAR());
+
+    auto inSet = makeInListStrings(
+        data->childAt(0)->asFlatVector<StringView>(), numValues);
+
+    std::ostringstream inList;
+    bool first = true;
+    for (auto s : inSet) {
+      if (!first) {
+        inList << ", ";
+      } else {
+        first = false;
+      }
+      inList << "'" << s.str() << "'";
     }
 
     auto sql = fmt::format("c0 IN ({})", inList.str());
@@ -83,7 +130,7 @@ class InBenchmark : public functions::test::FunctionBenchmarkBase {
 
   void runFast(size_t numValues) {
     folly::BenchmarkSuspender suspender;
-    auto data = makeData();
+    auto data = makeData(INTEGER());
 
     folly::F14FastSet<int32_t> inSet;
     inSet.reserve(numValues);
@@ -95,9 +142,18 @@ class InBenchmark : public functions::test::FunctionBenchmarkBase {
     doRunFast(inSet, data->childAt(0));
   }
 
-  void doRunFast(
-      const folly::F14FastSet<int32_t>& inSet,
-      const VectorPtr& data) {
+  void runFastStrings(size_t numValues) {
+    folly::BenchmarkSuspender suspender;
+    auto data = makeData(VARCHAR());
+    auto inSet = makeInListStrings(
+        data->childAt(0)->asFlatVector<StringView>(), numValues);
+    suspender.dismiss();
+
+    doRunFast(inSet, data->childAt(0));
+  }
+
+  template <typename T>
+  void doRunFast(const folly::F14FastSet<T>& inSet, const VectorPtr& data) {
     int cnt = 0;
     for (auto i = 0; i < 1000; i++) {
       cnt += fastIn(inSet, data)->size();
@@ -126,6 +182,25 @@ BENCHMARK_RELATIVE(in1K) {
   benchmark.run(1'000);
 }
 
+BENCHMARK(fastInStrings) {
+  InBenchmark benchmark;
+  benchmark.runFastStrings(10);
+}
+
+BENCHMARK_RELATIVE(inStrings) {
+  InBenchmark benchmark;
+  benchmark.runStrings(10);
+}
+
+BENCHMARK(fastIn1KStrings) {
+  InBenchmark benchmark;
+  benchmark.runFastStrings(1'000);
+}
+
+BENCHMARK_RELATIVE(in1KStrings) {
+  InBenchmark benchmark;
+  benchmark.runStrings(1'000);
+}
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
