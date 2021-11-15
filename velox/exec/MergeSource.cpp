@@ -273,4 +273,54 @@ std::shared_ptr<MergeSource> MergeSource::createMergeExchangeSource(
     const std::string& taskId) {
   return std::make_shared<MergeExchangeSource>(mergeExchange, taskId);
 }
+
+namespace {
+void notify(std::optional<VeloxPromise<bool>>& promise) {
+  if (promise) {
+    promise->setValue(true);
+    promise.reset();
+  }
+}
+} // namespace
+
+BlockingReason MergeJoinSource::next(
+    ContinueFuture* future,
+    RowVectorPtr* data) {
+  return state_.withWLock([&](auto& state) {
+    if (state.data != nullptr) {
+      *data = std::move(state.data);
+      notify(producerPromise_);
+      return BlockingReason::kNotBlocked;
+    }
+
+    if (state.atEnd) {
+      data = nullptr;
+      return BlockingReason::kNotBlocked;
+    }
+
+    consumerPromise_ = VeloxPromise<bool>("MergeJoinSource::next");
+    *future = consumerPromise_->getSemiFuture();
+    return BlockingReason::kWaitForExchange;
+  });
+}
+
+BlockingReason MergeJoinSource::enqueue(
+    RowVectorPtr data,
+    ContinueFuture* future) {
+  return state_.withWLock([&](auto& state) {
+    if (data == nullptr) {
+      state.atEnd = true;
+      notify(consumerPromise_);
+      return BlockingReason::kNotBlocked;
+    }
+
+    VELOX_CHECK_NULL(state.data);
+    state.data = std::move(data);
+    notify(consumerPromise_);
+
+    producerPromise_ = VeloxPromise<bool>("MergeJoinSource::enqueue");
+    *future = producerPromise_->getSemiFuture();
+    return BlockingReason::kWaitForConsumer;
+  });
+}
 } // namespace facebook::velox::exec
