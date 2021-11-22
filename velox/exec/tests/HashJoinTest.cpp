@@ -908,3 +908,59 @@ TEST_F(HashJoinTest, rightJoin) {
       op,
       "SELECT t.c0, t.c1, u.c1 FROM t RIGHT JOIN u ON t.c0 = u.c0 AND (t.c1 + u.c1) % 2 = 3");
 }
+
+TEST_F(HashJoinTest, deltoid) {
+  const std::string leftPath = "/tmp/t1.dwrf";
+  const std::string rightPath = "/tmp/u1.dwrf";
+
+  // SELECT condition, sum(foreground_sessions_cnt)
+  // FROM t, u WHERE t.userid = u.userid
+  // GROUP BY 1
+  auto op = PlanBuilder(10)
+                .tableScan(ROW({"userid", "condition"}, {BIGINT(), VARCHAR()}))
+                .hashJoin(
+                    {0},
+                    {0},
+                    PlanBuilder(0)
+                        .tableScan(
+                            ROW({"userid", "foreground_sessions_cnt"},
+                                {BIGINT(), BIGINT()}))
+                        .project(
+                            {"userid", "foreground_sessions_cnt"},
+                            {"u_userid", "foreground_sessions_cnt"})
+                        .planNode(),
+                    "",
+                    {0, 1, 2, 3},
+                    core::JoinType::kInner)
+                .singleAggregation({1}, {"sum(foreground_sessions_cnt)"})
+                .planNode();
+
+  CursorParameters params;
+  params.planNode = op;
+
+  auto start = std::chrono::steady_clock::now();
+
+  auto cursor = std::make_unique<TaskCursor>(params);
+  auto task = cursor->task();
+
+  task->addSplit("10", makeHiveSplit(leftPath));
+  task->noMoreSplits("10");
+
+  task->addSplit("0", makeHiveSplit(rightPath));
+  task->noMoreSplits("0");
+
+  int32_t numRead = 0;
+  while (cursor->moveNext()) {
+    auto vector = cursor->current();
+    numRead += vector->size();
+  }
+
+  auto end = std::chrono::steady_clock::now();
+
+  std::cout << "Total: " << numRead << std::endl;
+  std::cout << "Time: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(
+                   end - start)
+                   .count()
+            << "ms" << std::endl;
+}
