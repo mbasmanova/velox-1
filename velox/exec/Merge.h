@@ -94,8 +94,10 @@ class Merge : public SourceOperator {
 
   std::vector<char*> rows_;
   std::unique_ptr<RowContainer> rowContainer_;
-  std::priority_queue<SourceRow, std::vector<SourceRow>, Comparator>
-      candidates_;
+//  std::priority_queue<SourceRow, std::vector<SourceRow>, Comparator>
+//      candidates_;
+  Comparator comparator_;
+  std::vector<SourceRow> candidates_;
   RowVectorPtr extractedCols_;
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
   ContinueFuture future_;

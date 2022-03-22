@@ -79,13 +79,15 @@ class LocalMergeSource : public MergeSource {
       : queue_(LocalMergeSourceQueue(rowType, mappedMemory, queueSize)) {}
 
   BlockingReason next(ContinueFuture* future, char** row) override {
-    return queue_.withWLock(
-        [&](auto& queue) { return queue.next(future, row); });
+//    return queue_.withWLock(
+//        [&](auto& queue) { return queue.next(future, row); });
+    return queue_.next(future, row);
   }
 
   BlockingReason enqueue(RowVectorPtr input, ContinueFuture* future) override {
-    return queue_.withWLock(
-        [&](auto& queue) { return queue.enqueue(input, future); });
+//    return queue_.withWLock(
+//        [&](auto& queue) { return queue.enqueue(input, future); });
+    return queue_.enqueue(input, future);
   }
 
  private:
@@ -165,7 +167,8 @@ class LocalMergeSource : public MergeSource {
     }
   };
 
-  folly::Synchronized<LocalMergeSourceQueue> queue_;
+//  folly::Synchronized<LocalMergeSourceQueue> queue_;
+  LocalMergeSourceQueue queue_;
 };
 
 class MergeExchangeSource : public MergeSource {

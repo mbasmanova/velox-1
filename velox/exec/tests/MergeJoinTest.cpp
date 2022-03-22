@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
@@ -498,4 +499,46 @@ TEST_F(MergeJoinTest, lazyVectors) {
       op,
       {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
       "SELECT c0, rc0, c1, rc1, c2, c3  FROM t, u WHERE t.c0 = u.rc0 and c1 + rc1 < 30");
+}
+
+TEST_F(MergeJoinTest, xxx) {
+  std::string bPath = "/Users/mbasmanova/test_data/b.dwrf";
+  std::string cPath = "/Users/mbasmanova/test_data/c.dwrf";
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  core::PlanNodeId bScanId;
+  core::PlanNodeId cScanId;
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .localMerge(
+                      {"metric_unitid", "metric_time"},
+                      {PlanBuilder(planNodeIdGenerator)
+                           .tableScan(
+                               ROW({"user_id", "total_request_cpu_us"},
+                                   {BIGINT(), BIGINT()}))
+                           .capturePlanNodeId(bScanId)
+//                           .limit(0, 100'000'000, true)
+                           .project(
+                               {"user_id as metric_unitid",
+                                "total_request_cpu_us",
+                                "1645228800 as metric_time",
+                                "'2022-02-19' as ds"})
+                           .planNode(),
+                       PlanBuilder(planNodeIdGenerator)
+                           .tableScan(
+                               ROW({"user_id", "total_request_cpu_us"},
+                                   {BIGINT(), BIGINT()}))
+                           .capturePlanNodeId(cScanId)
+//                           .limit(0, 100'000'000, true)
+                           .project(
+                               {"user_id as metric_unitid",
+                                "total_request_cpu_us",
+                                "1645228800 as metric_time",
+                                "'2022-02-19' as ds"})
+                           .planNode()})
+                  .singleAggregation({}, {"count(1)"})
+                  .planNode();
+
+  auto task = HiveConnectorTestBase::assertQuery(
+      plan, {{cScanId, {cPath}}, {bScanId, {bPath}}}, "SELECT null");
+  std::cout << printPlanWithStats(*plan, task->taskStats()) << std::endl;
 }

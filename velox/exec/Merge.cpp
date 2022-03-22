@@ -40,7 +40,12 @@ Merge::Merge(
       rowContainer_(std::make_unique<RowContainer>(
           outputType_->children(),
           operatorCtx_->mappedMemory())),
-      candidates_(Comparator(
+      //      candidates_(Comparator(
+      //          outputType_,
+      //          sortingKeys,
+      //          sortingOrders,
+      //          rowContainer_.get())),
+      comparator_(Comparator(
           outputType_,
           sortingKeys,
           sortingOrders,
@@ -64,7 +69,7 @@ BlockingReason Merge::pushSource(ContinueFuture* future, size_t sourceId) {
   char* row = nullptr;
   auto reason = sources_[sourceId]->next(future, &row);
   if (reason == BlockingReason::kNotBlocked && row) {
-    candidates_.emplace(sourceId, row);
+    candidates_.push_back({sourceId, row});
   }
   return reason;
 }
@@ -118,10 +123,22 @@ RowVectorPtr Merge::getOutput() {
   rows_.reserve(numRowsPerBatch);
 
   while (!candidates_.empty()) {
-    auto entry = candidates_.top();
-    candidates_.pop();
+    std::make_heap(
+        candidates_.begin(),
+        candidates_.end(),
+        [&](const auto& a, const auto& b) { return comparator_(a, b); });
+    std::pop_heap(
+        candidates_.begin(),
+        candidates_.end(),
+        [&](const auto& a, const auto& b) { return comparator_(a, b); });
+    auto entry = candidates_.back();
+    candidates_.pop_back();
 
-    rows_.push_back(rowContainer_->addRow(entry.second, extractedCols_));
+    auto* newRow = rowContainer_->newRow();
+    memcpy(newRow, entry.second, rowContainer_->rowSize(entry.second));
+    rows_.push_back(newRow);
+
+    //    rows_.push_back(rowContainer_->addRow(entry.second, extractedCols_));
 
     blockingReason_ = pushSource(&future_, entry.first);
     if (blockingReason_ != BlockingReason::kNotBlocked) {
@@ -182,8 +199,10 @@ LocalMerge::LocalMerge(
 }
 
 BlockingReason LocalMerge::addMergeSources(ContinueFuture* /* future */) {
-  sources_ = operatorCtx_->task()->getLocalMergeSources(
-      operatorCtx_->driverCtx()->splitGroupId, planNodeId());
+  if (sources_.empty()) {
+    sources_ = operatorCtx_->task()->getLocalMergeSources(
+        operatorCtx_->driverCtx()->splitGroupId, planNodeId());
+  }
   return BlockingReason::kNotBlocked;
 }
 
