@@ -15,10 +15,10 @@
  */
 #include "velox/exec/TreeOfLosers.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/time/Timer.h"
 
 #include <folly/Random.h>
 
-#include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <optional>
@@ -34,43 +34,69 @@ class TreeOfLosersTest : public testing::Test {
   folly::Random::DefaultGenerator rng_;
 };
 
-struct Value {
-  uint32_t value;
+class Value {
+ public:
+  Value() = default;
 
-  bool operator<(const Value& other) {
-    return value < other.value;
+  Value(uint32_t value) : value_(value) {}
+
+  uint32_t value() const {
+    return value_;
   }
-  bool operator==(const Value& other) {
-    return value == other.value;
+
+  int64_t payload() const {
+    return payload_;
   }
+
+ private:
+  uint32_t value_ = 0;
+  uint64_t payload_ = 11;
 };
 
 class Source {
  public:
   Source(std::vector<uint32_t>&& numbers) : numbers_(std::move(numbers)) {}
 
-  bool atEnd() const {
-    return numbers_.empty();
+  bool hasData() const {
+    return !numbers_.empty();
   }
 
-  Value next() {
-    VELOX_CHECK(!numbers_.empty());
-    auto value = numbers_.back();
+  Value* current() const {
+    if (numbers_.empty()) {
+      return nullptr;
+    }
+    if (!currentValid_) {
+      currentValid_ = true;
+      current_ = Value(numbers_.back());
+    }
+    return &current_;
+  }
+
+  void next() {
     numbers_.pop_back();
-    return Value{value};
+    currentValid_ = false;
+  }
+
+  bool operator<(const Source& other) const {
+    if (numbers_.empty()) {
+      return false;
+    }
+    if (other.numbers_.empty()) {
+      return true;
+    }
+    return current()->value() < other.current()->value();
   }
 
  private:
+  // True if 'current_' is initialized.
+  mutable bool currentValid_{false};
+  mutable Value current_;
   std::vector<uint32_t> numbers_;
 };
 
-int compare(Value left, Value right) {
-  return left < right ? -1 : left == right ? 0 : 1;
-}
-
 TEST_F(TreeOfLosersTest, merge) {
-  constexpr int32_t kNumValues = 1000000;
-  constexpr int32_t kNumRuns = 17;
+  constexpr int32_t kNumValues = 100000000;
+  constexpr int32_t kNumRuns = 31;
   std::vector<uint32_t> data;
   for (auto i = 0; i < kNumValues; ++i) {
     data.push_back(folly::Random::rand32(rng_));
@@ -97,10 +123,20 @@ TEST_F(TreeOfLosersTest, merge) {
   for (auto& run : runs) {
     sources.push_back(std::make_unique<Source>(std::move(run)));
   }
-  TreeOfLosers<Value, Source> tree(std::move(sources));
-  for (auto expected : data) {
-    auto result = tree.next(compare);
-    ASSERT_EQ(result.value().value, expected);
+  TreeOfLosers<Source> tree(std::move(sources));
+  uint64_t usec = 0;
+  {
+    MicrosecondTimer t(&usec);
+    for (auto expected : data) {
+      auto source = tree.next();
+      if (!source) {
+        FAIL() << "Premature end in TreeOfLosers";
+      }
+      auto result = source->current()->value();
+      ASSERT_EQ(result, expected);
+    }
+    ASSERT_FALSE(tree.next());
   }
-  ASSERT_FALSE(tree.next(compare).has_value());
+  std::cout << kNumValues << " values in " << kNumRuns << " streams " << usec
+            << "us";
 }

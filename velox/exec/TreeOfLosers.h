@@ -21,7 +21,7 @@
 
 namespace facebook::velox {
 
-template <typename Value, typename Source>
+template <typename Source>
 class TreeOfLosers {
  public:
   class Node {
@@ -30,55 +30,45 @@ class TreeOfLosers {
     Node(std::unique_ptr<Node> left, std::unique_ptr<Node>&& right)
         : left_(std::move(left)), right_(std::move(right)) {}
 
-    template <typename Compare>
-    std::optional<Value> front(Compare compare) {
-      if (atEnd_) {
-        return std::nullopt;
-      }
-      if (value_.has_value()) {
-        return value_;
-      }
+    Source* next() {
       if (source_) {
-        if (source_->atEnd()) {
-          atEnd_ = true;
-          return std::nullopt;
+        if (source_->hasData()) {
+          return source_.get();
         }
-        value_ = source_->next();
-        return std::optional<Value>(value_);
+        return nullptr;
       }
-      auto leftValue = left_->front(compare);
-      auto rightValue = right_->front(compare);
-      if (!leftValue.has_value()) {
-        if (!rightValue.has_value()) {
-          atEnd_ = true;
-          return std::nullopt;
+      if (!leftValue_ && !leftAtEnd_) {
+        leftValue_ = left_->next();
+        leftAtEnd_ = !leftValue_;
+      }
+      if (!rightValue_ && !rightAtEnd_) {
+        rightValue_ = right_->next();
+        rightAtEnd_ = !rightValue_;
+      }
+      Source* value;
+      if (rightValue_ && leftValue_) {
+        if (*leftValue_ < *rightValue_) {
+          value = leftValue_;
+          leftValue_ = nullptr;
+        } else {
+          value = rightValue_;
+          rightValue_ = nullptr;
         }
-        value_ = rightValue;
-        right_->pop();
-        return value_;
-      }
-      if (!rightValue.has_value()) {
-        value_ = leftValue;
-        left_->pop();
-        return value_;
-      }
-      int32_t result = compare(leftValue.value(), rightValue.value());
-      if (result <= 0) {
-        value_ = leftValue;
-        left_->pop();
+      } else if (leftValue_) {
+        value = leftValue_;
+        leftValue_ = nullptr;
       } else {
-        value_ = rightValue;
-        right_->pop();
+        value = rightValue_;
+        rightValue_ = nullptr;
       }
-      return value_;
+      return value;
     }
 
-    void pop() {
-      value_ = std::nullopt;
-    }
-
-    std::optional<Value> value_;
-    bool atEnd_ = false;
+   private:
+    Source* leftValue_{nullptr};
+    Source* rightValue_{nullptr};
+    bool leftAtEnd_{false};
+    bool rightAtEnd_{false};
     std::unique_ptr<Node> left_;
     std::unique_ptr<Node> right_;
     std::unique_ptr<Source> source_;
@@ -104,14 +94,17 @@ class TreeOfLosers {
     root_ = std::move(level[0]);
   }
 
-  template <typename Compare>
-  std::optional<Value> next(Compare compare) {
-    auto value = root_->front(compare);
-    root_->pop();
-    return value;
+  Source* next() {
+    if (lastValue_) {
+      lastValue_->next();
+    }
+    lastValue_ = root_->next();
+    return lastValue_;
   }
 
  private:
+  bool isFirst_{true};
+  Source* lastValue_{nullptr};
   std::unique_ptr<Node> root_;
 };
 } // namespace facebook::velox
