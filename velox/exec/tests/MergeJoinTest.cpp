@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
@@ -498,4 +499,38 @@ TEST_F(MergeJoinTest, lazyVectors) {
       op,
       {{rightScanId, {rightFile}}, {leftScanId, {leftFile}}},
       "SELECT c0, rc0, c1, rc1, c2, c3  FROM t, u WHERE t.c0 = u.rc0 and c1 + rc1 < 30");
+}
+
+TEST_F(MergeJoinTest, xxx) {
+  std::string mPath = "/Users/mbasmanova/test_data/m.dwrf";
+  std::string pPath = "/Users/mbasmanova/test_data/p.dwrf";
+
+  auto planNodeIdGenerator = std::make_shared<PlanNodeIdGenerator>();
+  core::PlanNodeId mScanId;
+  core::PlanNodeId pScanId;
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .tableScan(ROW({"userid"}, {BIGINT()}))
+          .capturePlanNodeId(pScanId)
+          .mergeJoin(
+              {"userid"},
+              {"userid_2"},
+              PlanBuilder(planNodeIdGenerator)
+                  .tableScan(ROW({"userid"}, {BIGINT()}))
+                  .capturePlanNodeId(mScanId)
+                  .streamingAggregation(
+                      {0}, {}, {}, core::AggregationNode::Step::kSingle, false)
+                  .project({"'' as x", "userid as userid_2"})
+                  //                      .project({"userid as userid_2", "'' as
+                  //                      x"})
+                  .planNode(),
+              "",
+              {"userid", "x"})
+          .singleAggregation({}, {"count(1)"})
+          .planNode();
+
+  auto task = HiveConnectorTestBase::assertQuery(
+      plan, {{pScanId, {pPath}}, {mScanId, {mPath}}}, "SELECT null");
+
+  std::cout << printPlanWithStats(*plan, task->taskStats()) << std::endl;
 }

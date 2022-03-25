@@ -142,7 +142,10 @@ class MergeJoin : public Operator {
   /// last matching row and set match.complete to true. If all rows in 'input'
   /// have matching keys, add 'input' to 'match' and returns false to ensure
   /// that next batch of input is checked for more matching rows.
-  bool findEndOfMatch(Match& match, const RowVectorPtr& input);
+  bool findEndOfMatch(
+      Match& match,
+      const RowVectorPtr& input,
+      const std::vector<ChannelIndex>& keys);
 
   /// Initialize 'output_' vector using 'ouputType_' and 'outputBatchSize_' if
   /// it is null.
