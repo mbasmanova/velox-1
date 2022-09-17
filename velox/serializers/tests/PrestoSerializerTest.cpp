@@ -105,6 +105,99 @@ class PrestoSerializerTest : public ::testing::Test {
     return vectorMaker_->rowVector(childVectors);
   }
 
+  void writeInt32(OutputStream* out, int32_t value) {
+    out->write(reinterpret_cast<char*>(&value), sizeof(value));
+  }
+
+  void writeInt64(OutputStream* out, int64_t value) {
+    out->write(reinterpret_cast<char*>(&value), sizeof(value));
+  }
+
+  // Take a base vector and serialize it as an RLE vector
+  void serializeAsRle(
+      int32_t numValues,
+      RowVectorPtr rowValueVector,
+      std::ostream* output) {
+    // row must have a single vector
+    EXPECT_EQ(rowValueVector->size(), 1);
+
+    // value vector must have a single value
+    EXPECT_EQ(rowValueVector->childAt(0)->size(), 1);
+
+    const char codec = 0;
+    const int32_t sizeInBytesOffset = 4 + 1;
+    const int32_t headerSize = sizeInBytesOffset + 4 + 4 + 8;
+    const int32_t numRowsSize = 4;
+    const int32_t dataOffset = headerSize + numRowsSize;
+
+    // serialize value vector
+    std::ostringstream outBase;
+    serialize(rowValueVector, &outBase, nullptr);
+    auto bytes = outBase.str();
+    auto sourcePage = toByteStream(bytes);
+    int32_t sourceOffset = sourcePage->tellp();
+
+    // read number of streams
+    sourcePage->seekp(sourceOffset + headerSize);
+    int32_t numStreams = sourcePage->read<int32_t>();
+
+    // read size of serialized value vector
+    sourcePage->seekp(sourceOffset + sizeInBytesOffset);
+    int32_t sourceDataSize = sourcePage->read<int32_t>() - numRowsSize;
+
+    // read bytes for serialized value vector
+    std::string sourceData;
+    sourceData.resize(sourceDataSize);
+    sourcePage->seekp(sourceOffset + dataOffset);
+    sourcePage->readBytes(&sourceData[0], sourceDataSize);
+
+    OStreamOutputStream out(output);
+    int32_t offset = out.tellp();
+
+    /*
+    Presto Page forrmat:
+    Size in bytes, Section name
+    4 - num rows
+    1 - codec marker
+    4 - uncompressed size in bytes
+    4 - compressed size in bytes (compression is not supported atm)
+    8 - checksum
+    4 - num streams
+    x - serialized streams:
+      4 - stream name length
+      ... - stream name
+      ... - stream data
+    */
+
+    // start creating the new serialized page
+    writeInt32(&out, numValues);
+
+    out.write(&codec, 1); // write codec w/o checksum
+    writeInt32(&out, 0); // make space for uncompressedSizeInBytes
+    writeInt32(&out, 0); // make space for sizeInBytes
+    writeInt64(&out, 0); // write zero checksum
+
+    // write stream count
+    writeInt32(&out, numStreams + 1); // write number of strmeas + RLE stream
+
+    // write RLE encoding name length + name
+    writeInt32(&out, 3);
+    out.write("RLE", 3);
+    writeInt32(&out, numValues); // write number of RLE encoded values
+
+    // copy serialized value vector into the RLE page
+    out.write(&sourceData[0], sourceDataSize);
+
+    // fill in uncompressedSizeInBytes & sizeInBytes
+    int32_t size = (int32_t)out.tellp() - offset;
+    int32_t uncompressedSize = size - headerSize;
+
+    out.seekp(offset + sizeInBytesOffset);
+    writeInt32(&out, uncompressedSize);
+    writeInt32(&out, uncompressedSize);
+    out.seekp(offset + size);
+  }
+
   void testRoundTrip(
       VectorPtr vector,
       const VectorSerde::Options* serdeOptions = nullptr) {
@@ -115,6 +208,23 @@ class PrestoSerializerTest : public ::testing::Test {
     auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
     auto deserialized = deserialize(rowType, out.str(), serdeOptions);
     assertEqualVectors(deserialized, rowVector);
+  }
+
+  void testRleRoundTrip(int32_t numValues, VectorPtr valueVector) {
+    EXPECT_EQ(valueVector->size(), 1); // value vector must have a single value
+    EXPECT_GT(numValues, 0);
+
+    auto rowVector = vectorMaker_->rowVector({valueVector});
+    std::ostringstream out;
+    serializeAsRle(numValues, rowVector, &out);
+
+    auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+    auto deserialized = deserialize(rowType, out.str(), nullptr);
+
+    auto expectedRleVector =
+        BaseVector::wrapInConstant(numValues, 0, valueVector);
+    auto expectedRleRowVector = vectorMaker_->rowVector({expectedRleVector});
+    assertEqualVectors(deserialized, expectedRleRowVector);
   }
 
   std::unique_ptr<memory::MemoryPool> pool_;
@@ -318,4 +428,56 @@ TEST_F(PrestoSerializerTest, unscaledLongDecimal) {
     vector->setNull(i, true);
   }
   testRoundTrip(vector);
+}
+
+TEST_F(PrestoSerializerTest, rlePrimitiveValue) {
+  int32_t numRows = 5;
+
+  auto booleanVector =
+      vectorMaker_->flatVector<bool>(1, [](vector_size_t row) { return true; });
+  testRleRoundTrip(5, booleanVector);
+
+  auto longVector = vectorMaker_->flatVector<int64_t>(
+      1, [](vector_size_t row) { return row; });
+  testRleRoundTrip(5, longVector);
+
+  auto doubleVector = vectorMaker_->flatVector<double>(
+      1, [](vector_size_t row) { return row * 0.1; });
+  testRleRoundTrip(5, doubleVector);
+
+  std::vector<std::string> strings = {"hello"};
+  auto stringVector = vectorMaker_->flatVector(strings);
+  testRleRoundTrip(5, stringVector);
+
+  std::vector<std::vector<int64_t>> arrayData = {{3, 25}};
+  auto arrayVector = vectorMaker_->arrayVector<int64_t>(arrayData);
+  testRleRoundTrip(5, arrayVector);
+
+  auto mapKeys = vectorMaker_->flatVector<int32_t>({1});
+  auto mapValues = vectorMaker_->flatVector<int64_t>({7});
+  auto mapVector = vectorMaker_->mapVector({0}, mapKeys, mapValues);
+  testRleRoundTrip(5, arrayVector);
+}
+
+TEST_F(PrestoSerializerTest, rleNulls) {
+  int32_t numRows = 5;
+
+  auto booleanVector = vectorMaker_->allNullFlatVector<bool>(1);
+  testRleRoundTrip(5, booleanVector);
+
+  auto longVector = vectorMaker_->allNullFlatVector<int64_t>(1);
+  testRleRoundTrip(5, longVector);
+
+  auto doubleVector = vectorMaker_->allNullFlatVector<double>(1);
+  testRleRoundTrip(5, doubleVector);
+
+  auto stringVector =
+      vectorMaker_->flatVectorNullable<const char*>({std::nullopt});
+  testRleRoundTrip(5, stringVector);
+
+  auto arrayVector = vectorMaker_->allNullArrayVector(1, BIGINT());
+  testRleRoundTrip(numRows, arrayVector);
+
+  auto mapVector = vectorMaker_->allNullMapVector(1, VARCHAR(), BIGINT());
+  testRleRoundTrip(numRows, mapVector);
 }

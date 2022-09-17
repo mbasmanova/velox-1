@@ -29,6 +29,7 @@ namespace {
 int8_t kCompressedBitMask = 1;
 int8_t kEncryptedBitMask = 2;
 int8_t kCheckSumBitMask = 4;
+constexpr folly::StringPiece kRLE{"RLE"};
 
 int64_t computeChecksum(
     PrestoOutputStreamListener* listener,
@@ -449,6 +450,20 @@ void readColumns(
     std::vector<VectorPtr>* result,
     bool useLosslessTimestamp);
 
+/// Read RLE encoded vector
+void readConstantVector(
+    ByteStream* source,
+    std::shared_ptr<const Type> type,
+    velox::memory::MemoryPool* pool,
+    VectorPtr* result,
+    bool useLosslessTimestamp) {
+  auto size = source->read<int32_t>();
+  std::vector<TypePtr> childTypes = {type};
+  std::vector<VectorPtr> children(1);
+  readColumns(source, pool, childTypes, &children, useLosslessTimestamp);
+  *result = BaseVector::wrapInConstant(size, 0, children[0]);
+}
+
 void readArrayVector(
     ByteStream* source,
     std::shared_ptr<const Type> type,
@@ -690,9 +705,8 @@ std::string readLengthPrefixedString(ByteStream* source) {
   return value;
 }
 
-void readAndCheckType(ByteStream* source, TypePtr type) {
+void checkTypeEncoding(ByteStream* source, std::string encoding, TypePtr type) {
   auto kindEncoding = typeToEncodingName(type);
-  std::string encoding = readLengthPrefixedString(source);
   VELOX_CHECK(
       encoding == kindEncoding,
       "Encoding to Type mismatch {} expected {} got {}",
@@ -736,14 +750,20 @@ void readColumns(
           {TypeKind::UNKNOWN, &read<UnknownValue>}};
 
   for (int32_t i = 0; i < types.size(); ++i) {
-    auto it = readers.find(types[i]->kind());
-    VELOX_CHECK(
-        it != readers.end(),
-        "Column reader for type {} is missing",
-        types[i]->kindName());
+    auto encoding = readLengthPrefixedString(source);
+    if (encoding == kRLE) {
+      readConstantVector(
+          source, types[i], pool, &(*result)[i], useLosslessTimestamp);
+    } else {
+      checkTypeEncoding(source, encoding, types[i]);
+      auto it = readers.find(types[i]->kind());
+      VELOX_CHECK(
+          it != readers.end(),
+          "Column reader for type {} is missing",
+          types[i]->kindName());
 
-    readAndCheckType(source, types[i]);
-    it->second(source, types[i], pool, &(*result)[i], useLosslessTimestamp);
+      it->second(source, types[i], pool, &(*result)[i], useLosslessTimestamp);
+    }
   }
 }
 
