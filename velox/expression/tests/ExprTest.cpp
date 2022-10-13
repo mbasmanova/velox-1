@@ -2551,7 +2551,7 @@ TEST_F(ExprTest, lambdaWithRowField) {
 
   // We use strpos and c1 to ensure that the constant is peeled before calling
   // always_throws, not before the try.
-  auto evalResult = evaluate("filter(c1, x -> (x + c0.val >= 0))", rowVector);
+  auto evalResult = evaluate("filter(c1, x -> (x + (c0).val >= 0))", rowVector);
 
   assertEqualVectors(array, evalResult);
 }
