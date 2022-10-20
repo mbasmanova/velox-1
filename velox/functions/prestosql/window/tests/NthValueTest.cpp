@@ -180,8 +180,7 @@ TEST_F(NthValueTest, nullOffsets) {
       {vectors}, "nth_value(c0, c2)", kSortOrderBasedOverClauses);
 }
 
-TEST_F(NthValueTest, offsetValues) {
-  // Test values for offset < 1.
+TEST_F(NthValueTest, errorCases) {
   vector_size_t size = 20;
 
   auto vectors = makeRowVector({
@@ -192,12 +191,31 @@ TEST_F(NthValueTest, offsetValues) {
 
   std::string overClause = "partition by c0 order by c1";
   std::string offsetError = "Offset must be at least 1";
+  std::string constantKFrameClause = "rows between 0 preceding and current row";
+  std::string columnarKFrameClause =
+      "rows between c2 preceding and current row";
+  std::string kBoundConstantOffsetError =
+      "k in frame bounds must be at least 1";
+  std::string kBoundColumnOffsetError =
+      "0 in frame bound at index 0 must be at least 1";
   assertWindowFunctionError(
       {vectors}, "nth_value(c0, 0)", overClause, offsetError);
   assertWindowFunctionError(
       {vectors}, "nth_value(c0, -1)", overClause, offsetError);
   assertWindowFunctionError(
       {vectors}, "nth_value(c0, c2)", overClause, offsetError);
+  assertWindowFunctionError(
+      {vectors},
+      "nth_value(c0, 5)",
+      overClause,
+      kBoundConstantOffsetError,
+      constantKFrameClause);
+  assertWindowFunctionError(
+      {vectors},
+      "nth_value(c0, 5)",
+      overClause,
+      kBoundColumnOffsetError,
+      columnarKFrameClause);
 }
 
 TEST_F(NthValueTest, basicRangeFrames) {
@@ -233,34 +251,157 @@ TEST_F(NthValueTest, multiInputRangeFrames) {
       {vectors}, "nth_value(c0, 5)", kFrameOverClauses, kRangeFrameClauses);
 }
 
-TEST_F(NthValueTest, basicRowFrames) {
+TEST_F(NthValueTest, basicUnboundedRowFrames) {
   auto vectors = makeBasicVectors(50);
 
   testWindowFunction(
-      {vectors}, "nth_value(c0, c2)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
   testWindowFunction(
-      {vectors}, "nth_value(c0, 1)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, 1)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
   testWindowFunction(
-      {vectors}, "nth_value(c0, 5)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
 }
 
-TEST_F(NthValueTest, singlePartitionRowFrames) {
+TEST_F(NthValueTest, singlePartitionUnboundedRowFrames) {
   auto vectors = makeSinglePartitionVectors(400);
 
   testWindowFunction(
-      {vectors}, "nth_value(c0, c2)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
   testWindowFunction(
-      {vectors}, "nth_value(c0, 5)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
 }
 
-TEST_F(NthValueTest, multiInputRowFrames) {
+TEST_F(NthValueTest, multiInputUnboundedRowFrames) {
   auto vectors = makeSinglePartitionVectors(200);
   auto doubleVectors = {vectors, vectors};
 
   testWindowFunction(
-      doubleVectors, "nth_value(c0, c2)", kFrameOverClauses, kRowsFrameClauses);
+      doubleVectors,
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
   testWindowFunction(
-      {vectors}, "nth_value(c0, 5)", kFrameOverClauses, kRowsFrameClauses);
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kUnboundedRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, basicConstantKBoundRowFrames) {
+  auto vectors = makeBasicVectors(50);
+
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 1)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, singlePartitionConstantKBoundRowFrames) {
+  auto vectors = makeSinglePartitionVectors(400);
+
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, multiInputConstantKBoundRowFrames) {
+  auto vectors = makeSinglePartitionVectors(200);
+  auto doubleVectors = {vectors, vectors};
+
+  testWindowFunction(
+      doubleVectors,
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kConstantKBoundRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, basicColumnarKBoundRowFrames) {
+  auto vectors = makeBasicVectors(50);
+
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 1)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, singlePartitionColumnarKBoundRowFrames) {
+  auto vectors = makeSinglePartitionVectors(400);
+
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+}
+
+TEST_F(NthValueTest, multiInputColumnarKBoundRowFrames) {
+  auto vectors = makeSinglePartitionVectors(200);
+  auto doubleVectors = {vectors, vectors};
+
+  testWindowFunction(
+      doubleVectors,
+      "nth_value(c0, c2)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
+  testWindowFunction(
+      {vectors},
+      "nth_value(c0, 5)",
+      kFrameOverClauses,
+      kColumnarKBoundRowsFrameClauses);
 }
 
 }; // namespace

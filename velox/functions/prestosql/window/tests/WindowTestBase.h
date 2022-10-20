@@ -75,11 +75,38 @@ static std::vector<std::string> kRangeFrameClauses = {
 
 /// Common set of window function frame clauses in ROWS mode, with current row,
 /// unbounded preceding, and unbounded following frame combinations.
-static std::vector<std::string> kRowsFrameClauses = {
+static std::vector<std::string> kUnboundedRowsFrameClauses = {
     "rows unbounded preceding",
     "rows current row",
     "rows between current row and unbounded following",
     "rows between unbounded preceding and unbounded following",
+};
+
+/// Common set of window function frame clauses in ROWS mode with k preceding
+/// and k following frame bounds, where k is a constant integer.
+static std::vector<std::string> kConstantKBoundRowsFrameClauses = {
+    "rows between 1 preceding and current row",
+    "rows between 5 preceding and current row",
+    "rows between 1 preceding and unbounded following",
+    "rows between 5 preceding and unbounded following",
+    "rows between current row and 1 following",
+    "rows between current row and 5 following",
+    "rows between unbounded preceding and 1 following",
+    "rows between unbounded preceding and 5 following",
+    "rows between 1 preceding and 5 following",
+    "rows between 5 preceding and 1 following",
+    "rows between 1 preceding and 1 following",
+    "rows between 5 preceding and 5 following",
+};
+
+/// Common set of window function frame clauses in ROWS mode with k preceding
+/// and k following frame bounds, where k is a column.
+static std::vector<std::string> kColumnarKBoundRowsFrameClauses = {
+    "rows between c2 preceding and current row",
+    "rows between c2 preceding and unbounded following",
+    "rows between current row and c2 following",
+    "rows between unbounded preceding and c2 following",
+    "rows between c2 preceding and c2 following",
 };
 
 class WindowTestBase : public exec::test::OperatorTestBase {
@@ -128,7 +155,8 @@ class WindowTestBase : public exec::test::OperatorTestBase {
       const std::vector<RowVectorPtr>& input,
       const std::string& function,
       const std::string& overClause,
-      const std::string& errorMessage);
+      const std::string& errorMessage,
+      const std::string frameClause = "");
 
  private:
   void testWindowFunction(

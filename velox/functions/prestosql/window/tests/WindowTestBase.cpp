@@ -120,8 +120,9 @@ void WindowTestBase::assertWindowFunctionError(
     const std::vector<RowVectorPtr>& input,
     const std::string& function,
     const std::string& overClause,
-    const std::string& errorMessage) {
-  auto queryInfo = buildWindowQuery(input, function, overClause, std::nullopt);
+    const std::string& errorMessage,
+    const std::string frameClause) {
+  auto queryInfo = buildWindowQuery(input, function, overClause, frameClause);
   SCOPED_TRACE(queryInfo.functionSql);
 
   VELOX_ASSERT_THROW(
