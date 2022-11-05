@@ -913,16 +913,9 @@ velox::variant readSingleValue(
   return materialize(result.second[0])[0][0];
 }
 
-void assertEqualResults(
+bool assertEqualResults(
     const std::vector<RowVectorPtr>& expected,
     const std::vector<RowVectorPtr>& actual) {
-  MaterializedRowMultiset actualRows;
-  for (auto vector : actual) {
-    auto rows = materialize(vector);
-    std::copy(
-        rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
-  }
-
   MaterializedRowMultiset expectedRows;
   for (auto vector : expected) {
     auto rows = materialize(vector);
@@ -932,10 +925,26 @@ void assertEqualResults(
         std::inserter(expectedRows, expectedRows.end()));
   }
 
+  return assertEqualResults(expectedRows, actual);
+}
+
+bool assertEqualResults(
+    const MaterializedRowMultiset& expectedRows,
+    const std::vector<RowVectorPtr>& actual) {
+  MaterializedRowMultiset actualRows;
+  for (auto vector : actual) {
+    auto rows = materialize(vector);
+    std::copy(
+        rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
+  }
+
   if (not compareMaterializedRows(actualRows, expectedRows)) {
     auto message = generateUserFriendlyDiff(expectedRows, actualRows);
     EXPECT_TRUE(false) << message << "Unexpected results";
+    return false;
   }
+
+  return true;
 }
 
 void printResults(const RowVectorPtr& result, std::ostream& out) {

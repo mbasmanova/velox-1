@@ -139,7 +139,7 @@ class FuzzerRunner {
     appendSpecialForms(specialForms, signatures);
     facebook::velox::test::expressionFuzzer(
         filterSignatures(signatures, onlyFunctions, skipFunctions), seed);
-    return RUN_ALL_TESTS();
+    return 0;
   }
 };
 
