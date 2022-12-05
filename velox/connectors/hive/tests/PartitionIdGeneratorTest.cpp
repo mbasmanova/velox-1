@@ -139,27 +139,6 @@ TEST_F(PartitionIdGeneratorTest, stableIdsMultipleKeys) {
   }
 }
 
-TEST_F(PartitionIdGeneratorTest, maxPartitionId) {
-  PartitionIdGenerator idGenerator(ROW({BIGINT()}), {0}, 100, pool());
-
-  // Make 10 partitions: 0,..9.
-  auto firstInput = makeRowVector({
-      makeFlatVector<int64_t>(1000, [&](auto row) { return row % 10; }),
-  });
-
-  raw_vector<uint64_t> ids;
-  idGenerator.run(firstInput, ids);
-  EXPECT_EQ(idGenerator.recentMaxPartitionId(), 9);
-
-  // Feed data for the first 8 partitions.
-  auto secondInput = makeRowVector({
-      makeFlatVector<int64_t>(1000, [&](auto row) { return row % 8; }),
-  });
-
-  idGenerator.run(secondInput, ids);
-  EXPECT_EQ(idGenerator.recentMaxPartitionId(), 7);
-}
-
 TEST_F(PartitionIdGeneratorTest, limitOfPartitionNumber) {
   auto maxPartitions = 100;
 

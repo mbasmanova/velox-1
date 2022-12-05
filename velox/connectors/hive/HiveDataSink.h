@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/connectors/Connector.h"
+#include "velox/connectors/hive/PartitionIdGenerator.h"
 
 namespace facebook::velox::dwrf {
 class Writer;
@@ -194,7 +195,17 @@ class HiveDataSink : public DataSink {
   void close() override;
 
  private:
-  void createWriter(const std::optional<std::string>& partitionName);
+  // Pass 0 as partitionId when creating the single writer for an
+  // unpartitioned table.
+  void createWriter(
+      vector_size_t partitionId,
+      const std::optional<std::string>& partitionName);
+
+  // Compute the count of rows as well as the concrete row indices for every
+  // partition ID based on the ID labeling of rowPartitionIds.
+  void computePartitionRowCountsAndIndices(
+      uint64_t maxPartitionId,
+      memory::MemoryPool* pool);
 
   std::shared_ptr<const HiveWriterParameters> getWriterParameters(
       const std::optional<std::string>& partition) const;
@@ -205,10 +216,20 @@ class HiveDataSink : public DataSink {
   const std::shared_ptr<const HiveInsertTableHandle> insertTableHandle_;
   const ConnectorQueryCtx* connectorQueryCtx_;
   const CommitStrategy commitStrategy_;
-  // Parameters used by writers, and thus are tracked in the same order
-  // as the writers_ vector
+  const std::vector<column_index_t> partitionChannels_;
+  const std::unique_ptr<PartitionIdGenerator> partitionIdGenerator_;
+
+  // Below are structures for partitions from all inputs. writerInfo_ and
+  // writers_ are both indexed by partitionId.
   std::vector<std::shared_ptr<HiveWriterInfo>> writerInfo_;
   std::vector<std::unique_ptr<dwrf::Writer>> writers_;
+
+  // Below are structures updated when generating partition IDs for the current
+  // input. partitionIds_ are indexed by the row of input_.
+  // partitionRows_ and partitionSizes_ are indexed by partitionId.
+  raw_vector<uint64_t> partitionIds_;
+  std::vector<BufferPtr> partitionRows_;
+  std::vector<vector_size_t> partitionSizes_;
 };
 
 } // namespace facebook::velox::connector::hive

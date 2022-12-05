@@ -79,8 +79,6 @@ void PartitionIdGenerator::run(
       result[i] = nextPartitionId;
     }
   }
-
-  recentMaxId_ = *std::max_element(result.begin(), result.end());
 }
 
 void PartitionIdGenerator::computeValueIds(

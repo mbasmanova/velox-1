@@ -40,10 +40,38 @@ class TableWriteTest : public HiveConnectorTestBase {
   makeHiveConnectorSplits(
       const std::shared_ptr<TempDirectoryPath>& directoryPath) {
     std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
-    for (auto& filePath : fs::directory_iterator(directoryPath->path)) {
-      splits.push_back(makeHiveConnectorSplit(filePath.path().string()));
+
+    for (auto& subPath :
+         fs::recursive_directory_iterator(directoryPath->path)) {
+      if (subPath.is_regular_file()) {
+        splits.push_back(makeHiveConnectorSplit(subPath.path().string()));
+      }
     }
+
     return splits;
+  }
+
+  uint32_t countFilesRecursively(
+      const std::shared_ptr<TempDirectoryPath>& directoryPath) {
+    uint32_t count = 0;
+    for (auto& subPath :
+         fs::recursive_directory_iterator(directoryPath->path)) {
+      if (subPath.is_regular_file()) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  std::vector<RowVectorPtr> makeBatches(
+      vector_size_t numBatches,
+      std::function<RowVectorPtr(int32_t)> makeVector) {
+    std::vector<RowVectorPtr> batches;
+    batches.reserve(numBatches);
+    for (int32_t i = 0; i < numBatches; ++i) {
+      batches.push_back(makeVector(i));
+    }
+    return batches;
   }
 
   RowTypePtr rowType_{
@@ -68,16 +96,17 @@ TEST_F(TableWriteTest, scanFilterProjectWrite) {
                      .project({"c0", "c1", "c1 + c2", "substr(c5, 1, 1)"})
                      .planNode();
 
-  std::vector<std::string> columnNames = {
+  auto types = project->outputType()->children();
+  std::vector<std::string> tableColumnNames = {
       "c0", "c1", "c1_plus_c2", "substr_c5"};
   auto plan = planBuilder
                   .tableWrite(
-                      columnNames,
+                      tableColumnNames,
                       std::make_shared<core::InsertTableHandle>(
                           kHiveConnectorId,
                           makeHiveInsertTableHandle(
-                              columnNames,
-                              rowType_->children(),
+                              tableColumnNames,
+                              types,
                               {},
                               makeLocationHandle(outputDirectory->path))),
                       CommitStrategy::kNoCommit,
@@ -91,10 +120,10 @@ TEST_F(TableWriteTest, scanFilterProjectWrite) {
   // We create a new plan that only read that file and then
   // compare that against a duckDB query that runs the whole query
 
-  auto types = project->outputType()->children();
-  auto rowType = ROW(std::move(columnNames), std::move(types));
   assertQuery(
-      PlanBuilder().tableScan(rowType).planNode(),
+      PlanBuilder()
+          .tableScan(ROW(std::move(tableColumnNames), std::move(types)))
+          .planNode(),
       makeHiveConnectorSplits(outputDirectory),
       "SELECT c0, c1, c1 + c2, substr(c5, 1, 1) FROM tmp WHERE c0 <> 0");
 }
@@ -111,17 +140,18 @@ TEST_F(TableWriteTest, renameAndReorderColumns) {
   createDuckDbTable(vectors);
 
   auto outputDirectory = TempDirectoryPath::create();
-  auto tableRowType = ROW({"d", "c", "b"}, {VARCHAR(), DOUBLE(), INTEGER()});
+  auto inputRowType = ROW({"d", "c", "b"}, {VARCHAR(), DOUBLE(), INTEGER()});
+  std::vector<std::string> tableColumnNames = {"x", "y", "z"};
   auto plan = PlanBuilder()
                   .tableScan(rowType)
                   .tableWrite(
-                      tableRowType,
-                      {"x", "y", "z"},
+                      inputRowType,
+                      tableColumnNames,
                       std::make_shared<core::InsertTableHandle>(
                           kHiveConnectorId,
                           makeHiveInsertTableHandle(
-                              {"x", "y", "z"},
-                              tableRowType->children(),
+                              tableColumnNames,
+                              inputRowType->children(),
                               {},
                               makeLocationHandle(outputDirectory->path))),
                       CommitStrategy::kNoCommit,
@@ -133,7 +163,8 @@ TEST_F(TableWriteTest, renameAndReorderColumns) {
 
   assertQuery(
       PlanBuilder()
-          .tableScan(ROW({"x", "y", "z"}, {VARCHAR(), DOUBLE(), INTEGER()}))
+          .tableScan(ROW(
+              std::move(tableColumnNames), {{VARCHAR(), DOUBLE(), INTEGER()}}))
           .planNode(),
       makeHiveConnectorSplits(outputDirectory),
       "SELECT d, c, b FROM tmp");
@@ -211,8 +242,8 @@ TEST_F(TableWriteTest, constantVectors) {
                     std::make_shared<core::InsertTableHandle>(
                         kHiveConnectorId,
                         makeHiveInsertTableHandle(
-                            rowType_->names(),
-                            rowType_->children(),
+                            rowType->names(),
+                            rowType->children(),
                             {},
                             makeLocationHandle(outputDirectory->path))),
                     CommitStrategy::kNoCommit,
@@ -262,6 +293,117 @@ TEST_F(TableWriteTest, TestASecondCommitStrategy) {
       PlanBuilder().tableScan(rowType_).planNode(),
       makeHiveConnectorSplits(outputDirectory),
       "SELECT * FROM tmp");
+}
+
+TEST_F(TableWriteTest, distinctPartitions) {
+  int32_t numPartitions = 50;
+  int32_t numBatches = 2;
+
+  auto rowType = ROW({"p0"}, {VARCHAR()});
+  std::vector<std::string> partitionNames = {"p0"};
+
+  auto inputFilePaths = makeFilePaths(numBatches);
+  std::vector<RowVectorPtr> vectors =
+      makeBatches(numBatches, [&](int32_t batch) {
+        return makeRowVector(
+            rowType->names(),
+            {makeFlatVector<StringView>(numPartitions, [&](auto row) {
+              return StringView(fmt::format("str_{}", row));
+            })});
+      });
+  for (int i = 0; i < numBatches; i++) {
+    writeToFile(inputFilePaths[i]->path, vectors[i]);
+  }
+
+  createDuckDbTable(vectors);
+
+  auto outputDirectory = TempDirectoryPath::create();
+  auto plan = PlanBuilder()
+                  .tableScan(rowType)
+                  .tableWrite(
+                      rowType->names(),
+                      std::make_shared<core::InsertTableHandle>(
+                          kHiveConnectorId,
+                          makeHiveInsertTableHandle(
+                              rowType->names(),
+                              rowType->children(),
+                              partitionNames,
+                              makeLocationHandle(outputDirectory->path))),
+                      CommitStrategy::kNoCommit,
+                      "rows")
+                  .project({"rows"})
+                  .planNode();
+
+  auto task = assertQuery(plan, inputFilePaths, "SELECT count(*) FROM tmp");
+
+  assertQuery(
+      PlanBuilder().tableScan(rowType).planNode(),
+      makeHiveConnectorSplits(outputDirectory),
+      "SELECT * FROM tmp");
+
+  EXPECT_EQ(
+      countFilesRecursively(outputDirectory),
+      numPartitions * task->numOutputDrivers());
+}
+
+TEST_F(TableWriteTest, partitionAndRegularColumns) {
+  int32_t numPartitions = 50;
+  int32_t numBatches = 2;
+
+  auto rowType = ROW(
+      {"c0", "p0", "c1", "c2"}, {INTEGER(), INTEGER(), VARCHAR(), BIGINT()});
+  std::vector<std::string> partitionNames = {"p0"};
+
+  auto inputFilePaths = makeFilePaths(numBatches);
+  std::vector<RowVectorPtr> vectors =
+      makeBatches(numBatches, [&](int32_t batch) {
+        return makeRowVector(
+            rowType->names(),
+            {makeFlatVector<int32_t>(
+                 numPartitions, [&](auto row) { return row + 100; }),
+             makeFlatVector<int32_t>(
+                 numPartitions, [&](auto row) { return row; }),
+             makeFlatVector<StringView>(
+                 numPartitions,
+                 [&](auto row) {
+                   return StringView(fmt::format("str_{}", row));
+                 }),
+             makeFlatVector<int64_t>(
+                 numPartitions, [&](auto row) { return row + 1000; })});
+      });
+  for (int i = 0; i < numBatches; i++) {
+    writeToFile(inputFilePaths[i]->path, vectors[i]);
+  }
+
+  createDuckDbTable(vectors);
+
+  auto outputDirectory = TempDirectoryPath::create();
+  auto plan = PlanBuilder()
+                  .tableScan(rowType)
+                  .tableWrite(
+                      rowType->names(),
+                      std::make_shared<core::InsertTableHandle>(
+                          kHiveConnectorId,
+                          makeHiveInsertTableHandle(
+                              rowType->names(),
+                              rowType->children(),
+                              partitionNames,
+                              makeLocationHandle(outputDirectory->path))),
+                      CommitStrategy::kNoCommit,
+                      "rows")
+                  .project({"rows"})
+                  .planNode();
+
+  auto task = assertQuery(plan, inputFilePaths, "SELECT count(*) FROM tmp");
+
+  assertQuery(
+      PlanBuilder().tableScan(rowType).planNode(),
+      makeHiveConnectorSplits(outputDirectory),
+      "SELECT * FROM tmp");
+
+  EXPECT_EQ(
+      countFilesRecursively(outputDirectory),
+      numPartitions * task->numOutputDrivers());
 }
 
 // Test TableWriter does not create a file if input is empty.

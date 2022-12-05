@@ -41,9 +41,9 @@ class PartitionIdGenerator {
   /// @param result Generated integer IDs indexed by input row number.
   void run(const RowVectorPtr& input, raw_vector<uint64_t>& result);
 
-  /// Return the maximum partition ID generated for the most recent input.
-  uint64_t recentMaxPartitionId() const {
-    return recentMaxId_;
+  /// Returns the total number of distinct partitions processed so far.
+  uint64_t totalPartitions() const {
+    return partitionIds_.size();
   }
 
  private:
@@ -79,9 +79,6 @@ class PartitionIdGenerator {
   // A vector holding unique partition key values. One row per partition. Row
   // numbers match partition IDs.
   RowVectorPtr partitionValues_;
-
-  // Maximum partition ID generated for the most recent input.
-  uint64_t recentMaxId_ = 0;
 
   // All rows are set valid to compute partition IDs for all input rows.
   SelectivityVector allRows_;
