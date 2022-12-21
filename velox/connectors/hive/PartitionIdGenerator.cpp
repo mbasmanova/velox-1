@@ -49,14 +49,34 @@ std::map<uint64_t, uint64_t> PartitionIdGenerator::run(
         !computeIds(allPartitionsVector_, activeIds_, newIds),
         "Partition ID generator should not rehash when computing for the existing partitions.");
 
-    activeIds_.applyToSelected([&](auto id) { idMap[id] = newIds[id]; });
+    activeIds_.applyToSelected([&](auto id) {
+      if (newIds[id] != id) {
+        idMap[id] = newIds[id];
+      }
+    });
 
-    movePartitions(idMap);
+    if (!idMap.empty()) {
+      movePartitions(idMap);
+    }
   }
 
-  addPartitions(input, result);
+  // No need to store partition key values when there is only one partition key.
+  if (hashers_.size() > 0) {
+    addPartitions(input, result);
+  }
 
   return idMap;
+}
+
+void PartitionIdGenerator::rehash() {
+  uint64_t multiplier = 1;
+  for (auto i = 0; i < hashers_.size(); i++) {
+    multiplier = hashers_[i]->enableValueIds(multiplier, kHasherReservePct);
+    VELOX_CHECK_NE(
+        multiplier,
+        exec::VectorHasher::kRangeTooLarge,
+        "Exceeded limit of distinct partitions.");
+  }
 }
 
 bool PartitionIdGenerator::computeIds(
@@ -66,34 +86,29 @@ bool PartitionIdGenerator::computeIds(
   result.resize(input->size());
 
   for (auto& hasher : hashers_) {
-    auto partitionVector = input->childAt(hasher->channel())->loadedVector();
-    hasher->decode(*partitionVector, rows);
+    hasher->decode(*input->childAt(hasher->channel()), rows);
   }
 
-  bool rehashed = false;
-  bool toRehash = false;
-  do {
-    toRehash = false;
-    for (auto& hasher : hashers_) {
-      if (!hasher->computeValueIds(rows, result)) {
-        toRehash = true;
-      }
+  bool rehashNeeded = false;
+  for (auto& hasher : hashers_) {
+    if (!hasher->computeValueIds(rows, result)) {
+      rehashNeeded = true;
     }
-    if (toRehash) {
-      rehashed = true;
+  }
 
-      uint64_t multiplier = 1;
-      for (auto i = 0; i < hashers_.size(); i++) {
-        multiplier = hashers_[i]->enableValueIds(multiplier, kHasherReservePct);
-        VELOX_CHECK_NE(
-            multiplier,
-            exec::VectorHasher::kRangeTooLarge,
-            "Exceeded limit of distinct partitions.");
-      }
-    }
-  } while (toRehash);
+  // No need to rehash if there is only one partition key.
+  if (!rehashNeeded || hashers_.size() == 1) {
+    return false;
+  }
 
-  return rehashed;
+  rehash();
+
+  for (auto& hasher : hashers_) {
+    bool ok = hasher->computeValueIds(rows, result);
+    VELOX_CHECK(ok, "Cannot assign value IDs after rehashing");
+  }
+
+  return true;
 }
 
 void PartitionIdGenerator::movePartitions(

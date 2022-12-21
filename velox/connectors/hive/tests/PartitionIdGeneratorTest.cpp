@@ -49,6 +49,44 @@ TEST_F(PartitionIdGeneratorTest, numDistinctIds) {
       numPartitions);
 }
 
+TEST_F(PartitionIdGeneratorTest, singleKey) {
+  PartitionIdGenerator idGenerator(ROW({VARCHAR()}), {0}, pool());
+
+  auto data = makeRowVector({
+      makeFlatVector<StringView>({"2022-10-05", "2022-10-05"}),
+  });
+
+  auto moreData = makeRowVector({
+      makeFlatVector<StringView>({"2022-10-06", "2022-10-07"}),
+  });
+
+  raw_vector<uint64_t> ids;
+  EXPECT_EQ(idGenerator.run(data, ids).size(), 0);
+
+  auto idMap = idGenerator.run(moreData, ids);
+  EXPECT_EQ(idMap.size(), 0);
+}
+
+TEST_F(PartitionIdGeneratorTest, multiKey) {
+  PartitionIdGenerator idGenerator(ROW({VARCHAR(), VARCHAR()}), {0, 1}, pool());
+
+  auto data = makeRowVector({
+      makeFlatVector<StringView>({"2022-10-05", "2022-10-05"}),
+      makeFlatVector<StringView>({"09:00", "09:00"}),
+  });
+
+  auto moreData = makeRowVector({
+      makeFlatVector<StringView>({"2022-10-05", "2022-10-05"}),
+      makeFlatVector<StringView>({"10:00", "11:00"}),
+  });
+
+  raw_vector<uint64_t> ids;
+  EXPECT_EQ(idGenerator.run(data, ids).size(), 0);
+
+  auto idMap = idGenerator.run(moreData, ids);
+  EXPECT_EQ(idMap.size(), 0);
+}
+
 TEST_F(PartitionIdGeneratorTest, rehash) {
   int32_t numPartitions = 1000;
 

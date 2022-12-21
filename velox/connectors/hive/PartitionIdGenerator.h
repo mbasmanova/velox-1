@@ -63,6 +63,8 @@ class PartitionIdGenerator {
       const SelectivityVector& rows,
       raw_vector<uint64_t>& result);
 
+  void rehash();
+
   void movePartitions(const std::map<uint64_t, uint64_t>& indexMap);
 
   void addPartitions(
