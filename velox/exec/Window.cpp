@@ -352,21 +352,20 @@ void Window::updateKRowsFrameBounds(
 }
 
 void Window::updateFrameBounds(
-    const vector_size_t& i,
+    const vector_size_t& functionIndex,
     const bool& isStartBound,
     const vector_size_t& startRow,
-    const vector_size_t& numRows) {
+    const vector_size_t& numRows,
+    const vector_size_t* rawPeerStarts,
+    const vector_size_t* rawPeerEnds,
+    vector_size_t* rawFrameBounds) {
   auto firstPartitionRow = partitionStartRows_[currentPartition_];
   auto lastPartitionRow = partitionStartRows_[currentPartition_ + 1] - 1;
-  auto rawPeerStarts = peerStartBuffer_->asMutable<vector_size_t>();
-  auto rawPeerEnds = peerEndBuffer_->asMutable<vector_size_t>();
-  auto rawFrameBounds = isStartBound
-      ? frameStartBuffers_[i]->asMutable<vector_size_t>()
-      : frameEndBuffers_[i]->asMutable<vector_size_t>();
-  auto type = windowFrames_[i].type;
-  auto boundType =
-      isStartBound ? windowFrames_[i].startType : windowFrames_[i].endType;
-  auto frameArg = isStartBound ? windowFrames_[i].start : windowFrames_[i].end;
+  auto type = windowFrames_[functionIndex].type;
+  auto boundType = isStartBound ? windowFrames_[functionIndex].startType
+                                : windowFrames_[functionIndex].endType;
+  auto frameArg = isStartBound ? windowFrames_[functionIndex].start
+                               : windowFrames_[functionIndex].end;
 
   switch (boundType) {
     case core::WindowNode::BoundType::kUnboundedPreceding:
@@ -497,8 +496,22 @@ void Window::callApplyForPartitionRows(
   }
 
   for (auto i = 0; i < numFuncs; i++) {
-    updateFrameBounds(i, true, startRow, numRows);
-    updateFrameBounds(i, false, startRow, numRows);
+    updateFrameBounds(
+        i,
+        true,
+        startRow,
+        numRows,
+        rawPeerStarts,
+        rawPeerEnds,
+        rawFrameStarts[i]);
+    updateFrameBounds(
+        i,
+        false,
+        startRow,
+        numRows,
+        rawPeerStarts,
+        rawPeerEnds,
+        rawFrameEnds[i]);
     if (windowFrames_[i].start || windowFrames_[i].end) {
       // k preceding and k following bounds in ROWS mode can go over the
       // partition limits. Hence, they are bound to the first and last partition

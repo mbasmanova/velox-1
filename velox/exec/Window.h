@@ -150,10 +150,13 @@ class Window : public Operator {
 
   // Helper function to update frame bounds.
   void updateFrameBounds(
-      const vector_size_t& i,
+      const vector_size_t& functionIndex,
       const bool& isStartBound,
       const vector_size_t& startRow,
-      const vector_size_t& numRows);
+      const vector_size_t& numRows,
+      const vector_size_t* rawPeerStarts,
+      const vector_size_t* rawPeerEnds,
+      vector_size_t* rawFrameBounds);
 
   bool finished_ = false;
   const vector_size_t outputBatchSizeInBytes_;
