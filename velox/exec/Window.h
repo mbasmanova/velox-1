@@ -142,18 +142,18 @@ class Window : public Operator {
 
   // Helper function to update frame bounds for kPreceding, kFollowing frames.
   void updateKRowsFrameBounds(
-      const bool& isKPreceding,
+      const bool isKPreceding,
       const FrameChannelArg& frameArg,
-      const vector_size_t& startRow,
-      const vector_size_t& numRows,
+      const vector_size_t startRow,
+      const vector_size_t numRows,
       vector_size_t* rawFrameBounds);
 
   // Helper function to update frame bounds.
   void updateFrameBounds(
-      const vector_size_t& functionIndex,
-      const bool& isStartBound,
-      const vector_size_t& startRow,
-      const vector_size_t& numRows,
+      const vector_size_t functionIndex,
+      const bool isStartBound,
+      const vector_size_t startRow,
+      const vector_size_t numRows,
       const vector_size_t* rawPeerStarts,
       const vector_size_t* rawPeerEnds,
       vector_size_t* rawFrameBounds);

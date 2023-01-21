@@ -28,8 +28,8 @@ class NthValueTest : public WindowTestBase {
   void testPrimitiveType(const TypePtr& type) {
     vector_size_t size = 25;
     auto vectors = makeRowVector({
-        makeFlatVector<int32_t>(size, [](auto row) { return row % 5; }),
-        makeFlatVector<int32_t>(size, [](auto row) { return row; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 5; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row; }),
         makeFlatVector<int64_t>(size, [](auto row) { return row % 3 + 1; }),
         typeValues(type, size),
     });
@@ -43,16 +43,16 @@ class NthValueTest : public WindowTestBase {
 
   RowVectorPtr makeBasicVectors(vector_size_t size) {
     return makeRowVector({
-        makeFlatVector<int32_t>(size, [](auto row) { return row % 5; }),
-        makeFlatVector<int32_t>(size, [](auto row) { return row % 7; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 5; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 7; }),
         makeFlatVector<int64_t>(size, [](auto row) { return row % 3 + 1; }),
     });
   }
 
   RowVectorPtr makeSinglePartitionVectors(vector_size_t size) {
     return makeRowVector({
-        makeFlatVector<int32_t>(size, [](auto /* row */) { return 1; }),
-        makeFlatVector<int32_t>(size, [](auto row) { return row % 50; }),
+        makeFlatVector<int64_t>(size, [](auto /* row */) { return 1; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 50; }),
         makeFlatVector<int64_t>(size, [](auto row) { return row % 5 + 1; }),
     });
   }
@@ -197,7 +197,7 @@ TEST_F(NthValueTest, errorCases) {
   std::string kBoundConstantOffsetError =
       "k in frame bounds must be at least 1";
   std::string kBoundColumnOffsetError =
-      "0 in frame bound at index 0 must be at least 1";
+      "Frame bound at index 0 contains a row with value < 1";
   assertWindowFunctionError(
       {vectors}, "nth_value(c0, 0)", overClause, offsetError);
   assertWindowFunctionError(

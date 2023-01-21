@@ -123,8 +123,7 @@ Window::WindowFrame Window::createWindowFrame(
     const RowTypePtr& inputType) {
   auto createFrameChannelArg =
       [&](const core::TypedExprPtr& frame) -> std::optional<FrameChannelArg> {
-    // For frames with kPreceding or kFollowing bounds, frame is not nullptr.
-    // For the rest of the frame combinations, frame is nullptr.
+    // frame is nullptr for non (kPreceding or kFollowing) frames.
     if (frame == nullptr) {
       return std::nullopt;
     }
@@ -316,10 +315,10 @@ void Window::callResetPartition(vector_size_t partitionNumber) {
 }
 
 void Window::updateKRowsFrameBounds(
-    const bool& isKPreceding,
+    const bool isKPreceding,
     const FrameChannelArg& frameArg,
-    const vector_size_t& startRow,
-    const vector_size_t& numRows,
+    const vector_size_t startRow,
+    const vector_size_t numRows,
     vector_size_t* rawFrameBounds) {
   auto firstPartitionRow = partitionStartRows_[currentPartition_];
 
@@ -338,7 +337,7 @@ void Window::updateKRowsFrameBounds(
     for (auto i = 0; i < numRows; i++) {
       if (offsets[i] <= 0) {
         VELOX_USER_FAIL(
-            "{} in frame bound at index {} must be at least 1", offsets[i], i);
+            "Frame bound at index {} contains a row with value < 1", i);
       }
     }
 
@@ -352,10 +351,10 @@ void Window::updateKRowsFrameBounds(
 }
 
 void Window::updateFrameBounds(
-    const vector_size_t& functionIndex,
-    const bool& isStartBound,
-    const vector_size_t& startRow,
-    const vector_size_t& numRows,
+    const vector_size_t functionIndex,
+    const bool isStartBound,
+    const vector_size_t startRow,
+    const vector_size_t numRows,
     const vector_size_t* rawPeerStarts,
     const vector_size_t* rawPeerEnds,
     vector_size_t* rawFrameBounds) {
@@ -393,13 +392,21 @@ void Window::updateFrameBounds(
       break;
     }
     case core::WindowNode::BoundType::kPreceding: {
-      updateKRowsFrameBounds(
-          true, frameArg.value(), startRow, numRows, rawFrameBounds);
+      if (type == core::WindowNode::WindowType::kRows) {
+        updateKRowsFrameBounds(
+            true, frameArg.value(), startRow, numRows, rawFrameBounds);
+      } else {
+        VELOX_NYI("k preceding frame is only supported in ROWS mode");
+      }
       break;
     }
     case core::WindowNode::BoundType::kFollowing: {
-      updateKRowsFrameBounds(
-          false, frameArg.value(), startRow, numRows, rawFrameBounds);
+      if (type == core::WindowNode::WindowType::kRows) {
+        updateKRowsFrameBounds(
+            false, frameArg.value(), startRow, numRows, rawFrameBounds);
+      } else {
+        VELOX_NYI("k following frame is only supported in ROWS mode");
+      }
       break;
     }
     default:
@@ -413,12 +420,17 @@ void fixOutOfBoundFrames(
     const vector_size_t& numRows,
     vector_size_t* frameStart,
     vector_size_t* frameEnd) {
-  for (auto i = frameStart, j = frameEnd; i < frameStart + numRows; i++, j++) {
+  vector_size_t* frameStartIndex = nullptr;
+  vector_size_t* frameEndIndex = nullptr;
+
+  for (auto i = 0; i < numRows; i++) {
+    frameStartIndex = frameStart + i;
+    frameEndIndex = frameEnd + i;
     // Clamp frameStart and frameEnd to the first and last row of the partition
     // if required.
-    if (*i <= *j) {
-      *i = std::max(*i, 0);
-      *j = std::min(*j, lastRow);
+    if (*frameStartIndex <= *frameEndIndex) {
+      *frameStartIndex = std::max(*frameStartIndex, 0);
+      *frameEndIndex = std::min(*frameEndIndex, lastRow);
     } else {
       VELOX_NYI("Empty frames are currently not supported");
     }

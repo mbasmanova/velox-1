@@ -28,25 +28,21 @@ class SimpleAggregatesTest : public WindowTestBase {
 
   RowVectorPtr makeBasicVectors(vector_size_t size) {
     return makeRowVector({
-        makeFlatVector<int32_t>(
-            size, [](auto row) -> int32_t { return row % 10; }),
-        makeFlatVector<int32_t>(
-            size, [](auto row) -> int32_t { return row % 7; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 10; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 7; }),
         // k in k PRECEDING / FOLLOWING frame bounds, represented by c2 in
         // certain testcases, should at least be 1.
-        makeFlatVector<int32_t>(
-            size, [](auto row) -> int32_t { return row + 1; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row + 1; }),
     });
   }
 
   RowVectorPtr makeSinglePartitionVector(vector_size_t size) {
     return makeRowVector({
-        makeFlatVector<int32_t>(size, [](auto /* row */) { return 1; }),
-        makeFlatVector<int32_t>(size, [](auto row) { return row % 50; }),
+        makeFlatVector<int64_t>(size, [](auto /* row */) { return 1; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row % 50; }),
         // k in k PRECEDING / FOLLOWING frame bounds, represented by c2 in
         // certain testcases, should at least be 1.
-        makeFlatVector<int32_t>(
-            size, [](auto row) -> int32_t { return row + 1; }),
+        makeFlatVector<int64_t>(size, [](auto row) { return row + 1; }),
     });
   }
 
