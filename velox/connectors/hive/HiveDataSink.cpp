@@ -84,56 +84,42 @@ HiveDataSink::HiveDataSink(
 void HiveDataSink::appendData(VectorPtr inputVector) {
   auto input = std::static_pointer_cast<RowVector>(inputVector);
 
-  // Writing to unpartitioned table
+  // Write to unpartitioned table.
   if (partitionChannels_.empty()) {
-    if (writers_.empty()) {
-      writers_.resize(1);
-      writerInfo_.resize(1);
-      createWriter(0, std::nullopt);
-    }
+    ensureSingleWriter();
     writers_[0]->write(input);
     writerInfo_[0]->numWrittenRows += input->size();
     return;
   }
 
-  // Writing to partitioned table
+  // Write to partitioned table.
   partitionIdGenerator_->run(input, partitionIds_);
+  ensurePartitionWriters();
 
-  uint64_t maxPartitionId =
-      *std::max_element(partitionIds_.begin(), partitionIds_.end());
+  const auto numPartitions = partitionIdGenerator_->numPartitions();
 
-  computePartitionRowCountsAndIndices(
-      maxPartitionId + 1, connectorQueryCtx_->memoryPool());
+  if (numPartitions == 1) {
+    writers_[0]->write(input);
+    writerInfo_[0]->numWrittenRows += input->size();
+  } else {
+    computePartitionRowCountsAndIndices();
 
-  for (column_index_t i = 0; i < input->childrenSize(); i++) {
-    input->childAt(i)->loadedVector();
-  }
-
-  if (writers_.size() < (maxPartitionId + 1)) {
-    writers_.resize(maxPartitionId + 1);
-    writerInfo_.resize(maxPartitionId + 1);
-  }
-  for (vector_size_t id = 0; id <= maxPartitionId; id++) {
-    vector_size_t partitionSize = partitionSizes_[id];
-    if (partitionSize == 0) {
-      continue;
+    for (column_index_t i = 0; i < input->childrenSize(); ++i) {
+      input->childAt(i)->loadedVector();
     }
 
-    bool belongToOnePartition = partitionIdGenerator_->totalPartitions() == 1;
-    if (!writers_[id]) {
-      std::string partitionName = makePartitionName(
-          input,
-          partitionChannels_,
-          belongToOnePartition ? 0
-                               : partitionRows_[id]->as<vector_size_t>()[0]);
-      createWriter(id, partitionName);
-    }
+    for (auto id = 0; id < numPartitions; ++id) {
+      auto partitionSize = partitionSizes_[id];
+      if (partitionSize == 0) {
+        continue;
+      }
 
-    RowVectorPtr writerInput = belongToOnePartition
-        ? input
-        : exec::wrap(partitionSize, partitionRows_[id], input);
-    writers_[id]->write(writerInput);
-    writerInfo_[id]->numWrittenRows += partitionSize;
+      auto writerInput = partitionSize == input->size()
+          ? input
+          : exec::wrap(partitionSize, partitionRows_[id], input);
+      writers_[id]->write(writerInput);
+      writerInfo_[id]->numWrittenRows += partitionSize;
+    }
   }
 }
 
@@ -178,7 +164,30 @@ void HiveDataSink::close() {
   }
 }
 
-void HiveDataSink::createWriter(
+void HiveDataSink::ensureSingleWriter() {
+  if (writers_.empty()) {
+    writerInfo_.resize(1);
+    writers_.resize(1);
+    appendWriter(0, std::nullopt);
+  }
+}
+
+void HiveDataSink::ensurePartitionWriters() {
+  const auto numPartitions = partitionIdGenerator_->numPartitions();
+
+  auto numWriters = writers_.size();
+  if (numWriters >= numPartitions) {
+    return;
+  }
+
+  writers_.resize(numPartitions);
+  writerInfo_.resize(numPartitions);
+  for (auto i = numWriters; i < numPartitions; ++i) {
+    appendWriter(i, partitionIdGenerator_->partitionName(i));
+  }
+}
+
+void HiveDataSink::appendWriter(
     vector_size_t partitionId,
     const std::optional<std::string>& partitionName) {
   auto config = std::make_shared<WriterConfig>();
@@ -200,44 +209,33 @@ void HiveDataSink::createWriter(
       std::make_shared<HiveWriterInfo>(*writerParameters);
 }
 
-void HiveDataSink::computePartitionRowCountsAndIndices(
-    uint64_t maxPartitionId,
-    memory::MemoryPool* pool) {
-  vector_size_t numPartitionIds = maxPartitionId + 1;
-  uint64_t numRows = partitionIds_.size();
+void HiveDataSink::computePartitionRowCountsAndIndices() {
+  const auto numPartitions = partitionIdGenerator_->numPartitions();
+  const auto numRows = partitionIds_.size();
 
-  partitionSizes_.resize(numPartitionIds);
+  partitionSizes_.resize(numPartitions);
   std::fill(partitionSizes_.begin(), partitionSizes_.end(), 0);
-  partitionRows_.resize(numPartitionIds, nullptr);
+  partitionRows_.resize(numPartitions);
+  rawPartitionRows_.resize(numPartitions);
 
-  if (partitionIdGenerator_->totalPartitions() == 1) {
-    partitionSizes_[maxPartitionId] = numRows;
-    return;
-  }
-
-  for (uint64_t id = 0; id < numPartitionIds; id++) {
-    if (partitionRows_[id] != nullptr &&
-        partitionRows_[id]->size() < numRows * sizeof(vector_size_t)) {
-      partitionRows_[id] = allocateIndices(numRows, pool);
+  for (auto id = 0; id < numPartitions; id++) {
+    if (partitionRows_[id] == nullptr ||
+        partitionRows_[id]->capacity() < numRows * sizeof(vector_size_t)) {
+      partitionRows_[id] =
+          allocateIndices(numRows, connectorQueryCtx_->memoryPool());
+      rawPartitionRows_[id] = partitionRows_[id]->asMutable<vector_size_t>();
     }
   }
 
-  for (vector_size_t row = 0; row < numRows; row++) {
+  for (auto row = 0; row < numRows; row++) {
     uint64_t id = partitionIds_[row];
 
-    if (partitionRows_[id] == nullptr) {
-      partitionRows_[id] = allocateIndices(numRows, pool);
-    }
-
-    auto* rawIndex = partitionRows_[id]->asMutable<vector_size_t>();
-    rawIndex[partitionSizes_[id]] = row;
+    rawPartitionRows_[id][partitionSizes_[id]] = row;
     partitionSizes_[id]++;
   }
 
-  for (uint64_t id = 0; id < numPartitionIds; id++) {
-    if (partitionRows_[id] != nullptr) {
-      partitionRows_[id]->setSize(partitionSizes_[id] * sizeof(vector_size_t));
-    }
+  for (uint64_t id = 0; id < numPartitions; id++) {
+    partitionRows_[id]->setSize(partitionSizes_[id] * sizeof(vector_size_t));
   }
 }
 

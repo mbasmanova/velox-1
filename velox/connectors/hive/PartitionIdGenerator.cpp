@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/PartitionIdGenerator.h"
+#include "velox/connectors/hive/HivePartitionUtil.h"
 
 namespace facebook::velox::connector::hive {
 
@@ -32,13 +33,17 @@ PartitionIdGenerator::PartitionIdGenerator(
         exec::VectorHasher::create(inputType->childAt(channel), channel));
   }
 
+  std::vector<std::string> partitionKeyNames;
   std::vector<TypePtr> partitionKeyTypes;
   for (auto channel : partitionChannels_) {
+    partitionKeyNames.push_back(inputType->nameOf(channel));
     partitionKeyTypes.push_back(inputType->childAt(channel));
   }
 
   partitionValues_ = BaseVector::create<RowVector>(
-      ROW(std::move(partitionKeyTypes)), maxPartitions_, pool);
+      ROW(std::move(partitionKeyNames), std::move(partitionKeyTypes)),
+      maxPartitions_,
+      pool);
   for (auto& key : partitionValues_->children()) {
     key->resize(maxPartitions_);
   }
@@ -79,6 +84,13 @@ void PartitionIdGenerator::run(
       result[i] = nextPartitionId;
     }
   }
+}
+
+std::string PartitionIdGenerator::partitionName(uint64_t partition) const {
+  // TODO Change makePartitionName API to remove 'partitionChannel' argument.
+  std::vector<column_index_t> channels(partitionChannels_.size());
+  std::iota(channels.begin(), channels.end(), 0);
+  return makePartitionName(partitionValues_, channels, partition);
 }
 
 void PartitionIdGenerator::computeValueIds(

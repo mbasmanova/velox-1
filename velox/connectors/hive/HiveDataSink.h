@@ -197,15 +197,17 @@ class HiveDataSink : public DataSink {
  private:
   // Pass 0 as partitionId when creating the single writer for an
   // unpartitioned table.
-  void createWriter(
+  void appendWriter(
       vector_size_t partitionId,
       const std::optional<std::string>& partitionName);
 
+  void ensureSingleWriter();
+
+  void ensurePartitionWriters();
+
   // Compute the count of rows as well as the concrete row indices for every
   // partition ID based on the ID labeling of rowPartitionIds.
-  void computePartitionRowCountsAndIndices(
-      uint64_t maxPartitionId,
-      memory::MemoryPool* pool);
+  void computePartitionRowCountsAndIndices();
 
   std::shared_ptr<const HiveWriterParameters> getWriterParameters(
       const std::optional<std::string>& partition) const;
@@ -229,6 +231,7 @@ class HiveDataSink : public DataSink {
   // partitionRows_ and partitionSizes_ are indexed by partitionId.
   raw_vector<uint64_t> partitionIds_;
   std::vector<BufferPtr> partitionRows_;
+  std::vector<vector_size_t*> rawPartitionRows_;
   std::vector<vector_size_t> partitionSizes_;
 };
 

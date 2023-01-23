@@ -42,9 +42,11 @@ class PartitionIdGenerator {
   void run(const RowVectorPtr& input, raw_vector<uint64_t>& result);
 
   /// Returns the total number of distinct partitions processed so far.
-  uint64_t totalPartitions() const {
+  uint64_t numPartitions() const {
     return partitionIds_.size();
   }
+
+  std::string partitionName(uint64_t partition) const;
 
  private:
   static constexpr const int32_t kHasherReservePct = 20;
