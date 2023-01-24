@@ -150,7 +150,7 @@ class Window : public Operator {
 
   // Helper function to update frame bounds.
   void updateFrameBounds(
-      const vector_size_t functionIndex,
+      const WindowFrame& windowFrame,
       const bool isStartBound,
       const vector_size_t startRow,
       const vector_size_t numRows,

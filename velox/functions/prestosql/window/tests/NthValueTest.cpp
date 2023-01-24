@@ -196,8 +196,7 @@ TEST_F(NthValueTest, errorCases) {
       "rows between c2 preceding and current row";
   std::string kBoundConstantOffsetError =
       "k in frame bounds must be at least 1";
-  std::string kBoundColumnOffsetError =
-      "Frame bound at index 0 contains a row with value < 1";
+  std::string kBoundColumnOffsetError = "k in frame bounds must be at least 1";
   assertWindowFunctionError(
       {vectors}, "nth_value(c0, 0)", overClause, offsetError);
   assertWindowFunctionError(
