@@ -212,8 +212,9 @@ class MapFunction : public exec::VectorFunction {
       const SelectivityVector& rows) const {
     VELOX_CHECK_GE(keys->size(), rows.end());
     VELOX_CHECK_GE(values->size(), rows.end());
-    return rows.testSelected([&](vector_size_t row) {
-      return keys->offsetAt(row) == values->offsetAt(row);
+    return rows.isAllSelected() && rows.testSelected([&](vector_size_t row) {
+      return keys->offsetAt(row) == values->offsetAt(row) &&
+          keys->sizeAt(row) == values->sizeAt(row);
     });
   }
 };

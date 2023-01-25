@@ -74,11 +74,6 @@ using facebook::velox::test::SignatureTemplate;
 namespace facebook::velox::exec::test {
 namespace {
 
-struct ResultOrError {
-  RowVectorPtr result;
-  std::exception_ptr exceptionPtr;
-};
-
 class AggregationFuzzer {
  public:
   AggregationFuzzer(
