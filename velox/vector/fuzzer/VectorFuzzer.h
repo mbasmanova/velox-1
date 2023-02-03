@@ -227,6 +227,10 @@ class VectorFuzzer {
   TypePtr randType(int maxDepth = 5);
   RowTypePtr randRowType(int maxDepth = 5);
 
+  // Generate a random non-floating-point primitive type to be used as join keys
+  // or group-by key for aggregations, etc.
+  TypePtr randScalarNonFloatingPointType();
+
   void reSeed(size_t seed) {
     rng_.seed(seed);
   }

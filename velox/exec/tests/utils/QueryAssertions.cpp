@@ -549,50 +549,308 @@ std::string toString(const MaterializedRow& row) {
   return oss.str();
 }
 
-std::string generateUserFriendlyDiff(
-    const MaterializedRowMultiset& expectedRows,
-    const MaterializedRowMultiset& actualRows) {
-  std::vector<MaterializedRow> extraActualRows;
-  std::set_difference(
-      actualRows.begin(),
-      actualRows.end(),
-      expectedRows.begin(),
-      expectedRows.end(),
-      std::inserter(extraActualRows, extraActualRows.end()));
+struct MaterializedRowsForEpsilonComparison {
+ public:
+  MaterializedRowsForEpsilonComparison(
+      const std::vector<velox::column_index_t>& floatColumnIndices,
+      const std::vector<velox::column_index_t>& nonFloatColumnIndices)
+      : floatColumnIndices_{floatColumnIndices},
+        nonFloatColumnIndices_{nonFloatColumnIndices} {}
 
-  std::vector<MaterializedRow> missingActualRows;
-  std::set_difference(
-      expectedRows.begin(),
-      expectedRows.end(),
-      actualRows.begin(),
-      actualRows.end(),
-      std::inserter(missingActualRows, missingActualRows.end()));
+  // Generate user friendly diff message for materialized rows sorted by
+  // sortByUniqueKey. Values are compared with epsilon.
+  std::string getUserFriendlyDiff();
 
+  // Return true if the result sets should be compared with epsilon,
+  // false otherwise. Comparing with epsilon is needed only when both expected
+  // and actual rows are non-empty and of the same types. Comparing with epsilon
+  // is allowed only when the expected and actual rows can be sorted by unique
+  // keys at non-floating-point columns.
+  bool prepareForEpsilonComparison(
+      const MaterializedRowMultiset& expected,
+      const MaterializedRowMultiset& actual);
+
+  // Return true if the result sets match when compared with epsilon.
+  bool resultsMatch();
+
+ private:
+  bool customLessThan(
+      const MaterializedRow& lhs,
+      const MaterializedRow& rhs,
+      bool (*equal)(const variant& lhs, const variant& rhs),
+      bool (*lessThan)(const variant& lhs, const variant& rhs));
+
+  bool lessThanWithEpsilon(
+      const MaterializedRow& lhs,
+      const MaterializedRow& rhs);
+
+  bool equalWithEpsilon(const MaterializedRow& lhs, const MaterializedRow& rhs);
+
+  // Return true if currentRow and previousRow are the same at
+  // non-floating-point columns.
+  bool equalKeys(
+      const MaterializedRow& currentRow,
+      const MaterializedRow& previousRow);
+
+  /// Return true if there are multiple rows with the same values at
+  /// non-floating-point columns.
+  /// @param sortedRows Rows sorted by non-floating-point columns.
+  bool hasMultiRowGroups(const std::vector<MaterializedRow>& sortedRows);
+
+  // Sorts two lists of rows by non-floating point columns. Returns true if
+  // non-floating point columns contain unique combinations of values in at
+  // least one of left and right. The sorted results are stored in leftSorted
+  // and rightSorted in ascending order.
+  bool sortByUniqueKey(
+      const MaterializedRowMultiset& expected,
+      const MaterializedRowMultiset& actual);
+
+  bool initialized_ = false;
+
+  const std::vector<velox::column_index_t>& floatColumnIndices_;
+  const std::vector<velox::column_index_t>& nonFloatColumnIndices_;
+
+  std::vector<MaterializedRow> expectedSorted_;
+  std::vector<MaterializedRow> actualSorted_;
+};
+
+bool MaterializedRowsForEpsilonComparison::customLessThan(
+    const MaterializedRow& lhs,
+    const MaterializedRow& rhs,
+    bool (*equal)(const variant& lhs, const variant& rhs),
+    bool (*lessThan)(const variant& lhs, const variant& rhs)) {
+  for (auto i : nonFloatColumnIndices_) {
+    if (equal(lhs[i], rhs[i])) {
+      continue;
+    }
+    // The 1st non-equal element determines if 'left' is smaller or not.
+    return lessThan(lhs[i], rhs[i]);
+  }
+  for (auto i : floatColumnIndices_) {
+    if (equal(lhs[i], rhs[i])) {
+      continue;
+    }
+    // The 1st non-equal element determines if 'left' is smaller or not.
+    return lessThan(lhs[i], rhs[i]);
+  }
+  return lhs.size() < rhs.size();
+}
+
+bool MaterializedRowsForEpsilonComparison::lessThanWithEpsilon(
+    const MaterializedRow& lhs,
+    const MaterializedRow& rhs) {
+  return customLessThan(
+      lhs,
+      rhs,
+      [](const variant& lhs, const variant& rhs) {
+        return lhs.equalsWithEpsilon(rhs);
+      },
+      [](const variant& lhs, const variant& rhs) {
+        return lhs.lessThanWithEpsilon(rhs);
+      });
+}
+
+bool MaterializedRowsForEpsilonComparison::equalWithEpsilon(
+    const MaterializedRow& lhs,
+    const MaterializedRow& rhs) {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  auto size = lhs.size();
+  for (auto i = 0; i < size; ++i) {
+    if (!lhs[i].equalsWithEpsilon(rhs[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string makeErrorMessage(
+    const std::vector<MaterializedRow>& missingRows,
+    const std::vector<MaterializedRow>& extraRows,
+    size_t expectedSize,
+    size_t actualSize) {
   std::ostringstream message;
-  message << "Expected " << expectedRows.size() << ", got " << actualRows.size()
-          << std::endl;
-  message << extraActualRows.size() << " extra rows, "
-          << missingActualRows.size() << " missing rows" << std::endl;
+  message << "Expected " << expectedSize << ", got " << actualSize << std::endl;
+  message << extraRows.size() << " extra rows, " << missingRows.size()
+          << " missing rows" << std::endl;
 
-  auto extraRowsToPrint = std::min((size_t)10, extraActualRows.size());
+  auto extraRowsToPrint = std::min((size_t)10, extraRows.size());
   message << extraRowsToPrint << " of extra rows:" << std::endl;
 
   for (int32_t i = 0; i < extraRowsToPrint; i++) {
     message << "\t";
-    printRow(extraActualRows[i], message);
+    printRow(extraRows[i], message);
     message << std::endl;
   }
   message << std::endl;
 
-  auto missingRowsToPrint = std::min((size_t)10, missingActualRows.size());
+  auto missingRowsToPrint = std::min((size_t)10, missingRows.size());
   message << missingRowsToPrint << " of missing rows:" << std::endl;
   for (int32_t i = 0; i < missingRowsToPrint; i++) {
     message << "\t";
-    printRow(missingActualRows[i], message);
+    printRow(missingRows[i], message);
     message << std::endl;
   }
   message << std::endl;
   return message.str();
+}
+
+std::string MaterializedRowsForEpsilonComparison::getUserFriendlyDiff() {
+  VELOX_CHECK(
+      initialized_,
+      "Object must be initialized via validForEpsilonComparison first.");
+
+  std::vector<MaterializedRow> extraRows;
+  std::vector<MaterializedRow> missingRows;
+  int32_t actualIndex = 0;
+  int32_t expectedIndex = 0;
+
+  while (expectedIndex < expectedSorted_.size() &&
+         actualIndex < actualSorted_.size()) {
+    const auto& expectedRow = expectedSorted_[expectedIndex];
+    const auto& actualRow = actualSorted_[actualIndex];
+    if (equalWithEpsilon(expectedRow, actualRow)) {
+      ++expectedIndex;
+      ++actualIndex;
+    } else if (lessThanWithEpsilon(expectedRow, actualRow)) {
+      missingRows.push_back(expectedRow);
+      ++expectedIndex;
+    } else {
+      extraRows.push_back(actualRow);
+      ++actualIndex;
+    }
+  }
+  for (; actualIndex < actualSorted_.size(); ++actualIndex) {
+    extraRows.push_back(actualSorted_[actualIndex]);
+  }
+  for (; expectedIndex < expectedSorted_.size(); ++expectedIndex) {
+    missingRows.push_back(expectedSorted_[expectedIndex]);
+  }
+
+  return makeErrorMessage(
+      missingRows, extraRows, expectedSorted_.size(), actualSorted_.size());
+}
+
+bool MaterializedRowsForEpsilonComparison::equalKeys(
+    const MaterializedRow& currentRow,
+    const MaterializedRow& previousRow) {
+  for (auto i : nonFloatColumnIndices_) {
+    if (currentRow[i] != previousRow[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MaterializedRowsForEpsilonComparison::hasMultiRowGroups(
+    const std::vector<MaterializedRow>& sortedRows) {
+  for (auto i = 1; i < sortedRows.size(); ++i) {
+    if (equalKeys(sortedRows[i], sortedRows[i - 1])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MaterializedRowsForEpsilonComparison::sortByUniqueKey(
+    const MaterializedRowMultiset& expected,
+    const MaterializedRowMultiset& actual) {
+  std::copy(
+      expected.begin(), expected.end(), std::back_inserter(expectedSorted_));
+  std::copy(actual.begin(), actual.end(), std::back_inserter(actualSorted_));
+  auto lessThan = [&](const MaterializedRow& lhs, const MaterializedRow& rhs) {
+    return customLessThan(
+        lhs,
+        rhs,
+        [](const variant& lhs, const variant& rhs) { return lhs == rhs; },
+        [](const variant& lhs, const variant& rhs) { return lhs < rhs; });
+  };
+  std::sort(expectedSorted_.begin(), expectedSorted_.end(), lessThan);
+  std::sort(actualSorted_.begin(), actualSorted_.end(), lessThan);
+
+  // Check that every group grouped by non-floating-point columns has only
+  // one row.
+  return !hasMultiRowGroups(expectedSorted_) ||
+      !hasMultiRowGroups(actualSorted_);
+}
+
+bool MaterializedRowsForEpsilonComparison::resultsMatch() {
+  VELOX_CHECK(
+      initialized_,
+      "Object must be initialized via validForEpsilonComparison first.");
+  auto width = expectedSorted_[0].size();
+  auto length = expectedSorted_.size();
+  EXPECT_EQ(actualSorted_.size(), length);
+  for (auto i = 0; i < length; ++i) {
+    EXPECT_EQ(expectedSorted_[i].size(), width);
+    EXPECT_EQ(actualSorted_[i].size(), width);
+  }
+
+  // Compare row-by-row with epsilon.
+  for (auto i = 0; i < length; ++i) {
+    for (auto j = 0; j < width; ++j) {
+      if (!expectedSorted_[i][j].equalsWithEpsilon(actualSorted_[i][j])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool equalRowType(
+    const MaterializedRowMultiset& left,
+    const MaterializedRowMultiset& right) {
+  VELOX_DCHECK(!left.empty() && !right.empty());
+  if (left.begin()->size() != right.begin()->size()) {
+    return false;
+  }
+  auto width = left.begin()->size();
+  const auto& leftRow = *left.begin();
+  const auto& rightRow = *right.begin();
+  for (auto i = 0; i < width; ++i) {
+    if (leftRow[i].kind() != rightRow[i].kind()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MaterializedRowsForEpsilonComparison::prepareForEpsilonComparison(
+    const MaterializedRowMultiset& expected,
+    const MaterializedRowMultiset& actual) {
+  if (expected.empty() || actual.empty() || !equalRowType(expected, actual)) {
+    return false;
+  }
+
+  if (sortByUniqueKey(actual, expected)) {
+    initialized_ = true;
+    return true;
+  }
+  return false;
+}
+
+std::string generateUserFriendlyDiff(
+    const MaterializedRowMultiset& expectedRows,
+    const MaterializedRowMultiset& actualRows) {
+  std::vector<MaterializedRow> extraRows;
+  std::set_difference(
+      actualRows.begin(),
+      actualRows.end(),
+      expectedRows.begin(),
+      expectedRows.end(),
+      std::inserter(extraRows, extraRows.end()));
+
+  std::vector<MaterializedRow> missingRows;
+  std::set_difference(
+      expectedRows.begin(),
+      expectedRows.end(),
+      actualRows.begin(),
+      actualRows.end(),
+      std::inserter(missingRows, missingRows.end()));
+
+  return makeErrorMessage(
+      missingRows, extraRows, expectedRows.size(), actualRows.size());
 }
 
 void verifyDuckDBResult(const DuckDBQueryResult& result, std::string_view sql) {
@@ -703,9 +961,7 @@ std::shared_ptr<Task> assertQueryReturnsEmptyResult(
   return result.first->task();
 }
 
-// Special function to compare multisets with vectors of variants in a way that
-// we compare all floating point values inside using 'epsilon' constant.
-// Returns true if equal.
+// Compare left and right without epsilon and returns true if they are equal.
 static bool compareMaterializedRows(
     const MaterializedRowMultiset& left,
     const MaterializedRowMultiset& right) {
@@ -731,6 +987,89 @@ static bool compareMaterializedRows(
   return true;
 }
 
+bool assertEqualResults(
+    const std::vector<RowVectorPtr>& expected,
+    const std::vector<RowVectorPtr>& actual) {
+  MaterializedRowMultiset expectedRows;
+  for (auto vector : expected) {
+    auto rows = materialize(vector);
+    std::copy(
+        rows.begin(),
+        rows.end(),
+        std::inserter(expectedRows, expectedRows.end()));
+  }
+
+  return assertEqualResults(expectedRows, actual);
+}
+
+// Return two lists of indices in order of floating-point-typed and
+// non-floating-point-typed columns among the first n columns in rows.
+std::tuple<
+    std::vector<velox::column_index_t>,
+    std::vector<velox::column_index_t>>
+getFloatColumnIndices(const MaterializedRowMultiset& rows, size_t n) {
+  std::vector<velox::column_index_t> floatColumnIndices;
+  std::vector<velox::column_index_t> nonFloatColumnIndices;
+  auto& row = *rows.begin();
+  for (auto i = 0; i < n; ++i) {
+    if ((row[i].kind() == TypeKind::REAL ||
+         row[i].kind() == TypeKind::DOUBLE)) {
+      floatColumnIndices.push_back(i);
+    } else {
+      nonFloatColumnIndices.push_back(i);
+    }
+  }
+  return std::make_tuple(floatColumnIndices, nonFloatColumnIndices);
+}
+
+// Compare actualRows with expectedRows and return whether they match. Compare
+// actualRows and expectedRows with epsilon if needed and allowed. Otherwise,
+// compare their values directly. The underlying assumption is that aggregation
+// results can be sorted by unique keys and floating-point values in them are
+// computed in different ways and hence require epsilon comparison. For results
+// of other operations, floating-point values are likely copied from inputs and
+// hence can be compared directly.
+bool assertEqualResults(
+    const MaterializedRowMultiset& expectedRows,
+    const MaterializedRowMultiset& actualRows,
+    const std::string& message) {
+  auto width = expectedRows.empty() ? 0 : expectedRows.begin()->size();
+  auto [floatColumnIndices, nonFloatColumnIndices] =
+      getFloatColumnIndices(expectedRows, width);
+  MaterializedRowsForEpsilonComparison rowsForComparison{
+      floatColumnIndices, nonFloatColumnIndices};
+  if (!floatColumnIndices.empty() &&
+      rowsForComparison.prepareForEpsilonComparison(expectedRows, actualRows)) {
+    if (not rowsForComparison.resultsMatch()) {
+      auto diffMessage = rowsForComparison.getUserFriendlyDiff();
+      EXPECT_TRUE(false) << diffMessage << message;
+      return false;
+    }
+    return true;
+  }
+  // Compare the results directly without epsilon. This may cause false alarm
+  // if there are floating-point columns that are computed during the
+  // evaluation.
+  if (not compareMaterializedRows(expectedRows, actualRows)) {
+    auto diffMessage = generateUserFriendlyDiff(expectedRows, actualRows);
+    EXPECT_TRUE(false) << diffMessage << message;
+    return false;
+  }
+  return true;
+}
+
+bool assertEqualResults(
+    const MaterializedRowMultiset& expectedRows,
+    const std::vector<RowVectorPtr>& actual) {
+  MaterializedRowMultiset actualRows;
+  for (auto vector : actual) {
+    auto rows = materialize(vector);
+    std::copy(
+        rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
+  }
+  return assertEqualResults(expectedRows, actualRows, "Unexpected results");
+}
+
 void assertResults(
     const std::vector<RowVectorPtr>& results,
     const std::shared_ptr<const RowType>& resultType,
@@ -744,11 +1083,10 @@ void assertResults(
   }
 
   auto expectedRows = duckDbQueryRunner.execute(duckDbSql, resultType);
-  if (not compareMaterializedRows(actualRows, expectedRows)) {
-    auto message = generateUserFriendlyDiff(expectedRows, actualRows);
-    EXPECT_TRUE(false) << message << kDuckDbTimestampWarning
-                       << "\nDuckDB query: " << duckDbSql;
-  }
+  assertEqualResults(
+      expectedRows,
+      actualRows,
+      kDuckDbTimestampWarning + "\nDuckDB query: " + duckDbSql);
 }
 
 // To handle the case when the sorting keys are not unique and the order
@@ -772,11 +1110,21 @@ static bool compareOrderedPartitions(
       return false;
     }
   }
-  if (not compareMaterializedRows(left.second, right.second)) {
-    return false;
-  }
 
-  return true;
+  auto width = left.second.begin()->size();
+  auto [floatColumnIndices, nonFloatColumnIndices] =
+      getFloatColumnIndices(left.second, width);
+  MaterializedRowsForEpsilonComparison rowsForComparison{
+      floatColumnIndices, nonFloatColumnIndices};
+  if (!floatColumnIndices.empty() &&
+      rowsForComparison.prepareForEpsilonComparison(
+          left.second, right.second)) {
+    return rowsForComparison.resultsMatch();
+  }
+  // Compare the results directly without epsilon. This may cause false alarm
+  // if there are floating-point columns that are computed during the
+  // evaluation.
+  return compareMaterializedRows(left.second, right.second);
 }
 
 // Special function to compare vectors of ordered partitions in a way that
@@ -990,40 +1338,6 @@ velox::variant readSingleValue(
   EXPECT_EQ(1, result.second.size());
   EXPECT_EQ(1, result.second[0]->size());
   return materialize(result.second[0])[0][0];
-}
-
-bool assertEqualResults(
-    const std::vector<RowVectorPtr>& expected,
-    const std::vector<RowVectorPtr>& actual) {
-  MaterializedRowMultiset expectedRows;
-  for (auto vector : expected) {
-    auto rows = materialize(vector);
-    std::copy(
-        rows.begin(),
-        rows.end(),
-        std::inserter(expectedRows, expectedRows.end()));
-  }
-
-  return assertEqualResults(expectedRows, actual);
-}
-
-bool assertEqualResults(
-    const MaterializedRowMultiset& expectedRows,
-    const std::vector<RowVectorPtr>& actual) {
-  MaterializedRowMultiset actualRows;
-  for (auto vector : actual) {
-    auto rows = materialize(vector);
-    std::copy(
-        rows.begin(), rows.end(), std::inserter(actualRows, actualRows.end()));
-  }
-
-  if (not compareMaterializedRows(actualRows, expectedRows)) {
-    auto message = generateUserFriendlyDiff(expectedRows, actualRows);
-    EXPECT_TRUE(false) << message << "Unexpected results";
-    return false;
-  }
-
-  return true;
 }
 
 void printResults(const RowVectorPtr& result, std::ostream& out) {

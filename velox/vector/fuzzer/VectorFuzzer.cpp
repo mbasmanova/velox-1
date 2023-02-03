@@ -702,6 +702,23 @@ BufferPtr VectorFuzzer::fuzzNulls(vector_size_t size) {
   return builder.build();
 }
 
+TypePtr VectorFuzzer::randScalarNonFloatingPointType() {
+  static TypePtr kNonFloatingPointTypes[]{
+      BOOLEAN(),
+      TINYINT(),
+      SMALLINT(),
+      INTEGER(),
+      BIGINT(),
+      VARCHAR(),
+      VARBINARY(),
+      TIMESTAMP(),
+      DATE(),
+  };
+  static constexpr int kNumTypes =
+      sizeof(kNonFloatingPointTypes) / sizeof(kNonFloatingPointTypes[0]);
+  return kNonFloatingPointTypes[rand<uint32_t>(rng_) % kNumTypes];
+}
+
 TypePtr VectorFuzzer::randType(int maxDepth) {
   static TypePtr kScalarTypes[]{
       BOOLEAN(),
