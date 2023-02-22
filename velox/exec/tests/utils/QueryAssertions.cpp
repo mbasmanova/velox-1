@@ -349,6 +349,19 @@ velox::variant arrayVariantAt(
   return velox::variant::array(std::move(array));
 }
 
+namespace {
+velox::variant const getNullDecimalVariant(::duckdb::Value& value) {
+  uint8_t precision;
+  uint8_t scale;
+  value.type().GetDecimalProperties(precision, scale);
+  auto type = DECIMAL(precision, scale);
+  const auto nullValue = (type->isShortDecimal())
+      ? variant::shortDecimal(std::nullopt, type)
+      : variant::longDecimal(std::nullopt, type);
+  return nullValue;
+}
+} // namespace
+
 std::vector<MaterializedRow> materialize(
     ::duckdb::DataChunk* dataChunk,
     const std::shared_ptr<const RowType>& rowType) {
@@ -359,13 +372,25 @@ std::vector<MaterializedRow> materialize(
   std::vector<MaterializedRow> rows;
   rows.reserve(size);
 
+  // Pre-compute null values for all columns.
+  std::vector<variant> nulls;
+  for (size_t j = 0; j < rowType->size(); ++j) {
+    auto val = dataChunk->GetValue(j, 0);
+    auto typeKind = rowType->childAt(j)->kind();
+    if (isDecimalKind(typeKind)) {
+      nulls.push_back(getNullDecimalVariant(val));
+    } else {
+      nulls.emplace_back(variant(typeKind));
+    }
+  }
+
   for (size_t i = 0; i < size; ++i) {
     MaterializedRow row;
     row.reserve(rowType->size());
     for (size_t j = 0; j < rowType->size(); ++j) {
       auto typeKind = rowType->childAt(j)->kind();
       if (dataChunk->GetValue(j, i).IsNull()) {
-        row.push_back(variant(typeKind));
+        row.push_back(nulls[j]);
       } else if (typeKind == TypeKind::ARRAY) {
         row.push_back(
             arrayVariantAt(dataChunk->GetValue(j, i), rowType->childAt(j)));

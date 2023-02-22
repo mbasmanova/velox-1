@@ -348,9 +348,17 @@ TEST_F(QueryAssertionsTest, nullDecimalValue) {
       {std::nullopt}, SHORT_DECIMAL(5, 2))});
   EXPECT_TRUE(assertEqualResults({shortDecimal}, {shortDecimal}));
 
+  createDuckDbTable({shortDecimal});
+  auto plan = PlanBuilder().values({shortDecimal}).project({"c0"}).planNode();
+  assertQuery(plan, "SELECT c0 FROM tmp");
+
   auto longDecimal = makeRowVector(
       {makeNullableLongDecimalFlatVector({std::nullopt}, LONG_DECIMAL(20, 2))});
   EXPECT_TRUE(assertEqualResults({longDecimal}, {longDecimal}));
+
+  createDuckDbTable({longDecimal});
+  plan = PlanBuilder().values({longDecimal}).project({"c0"}).planNode();
+  assertQuery(plan, "SELECT c0 FROM tmp");
 
   EXPECT_NONFATAL_FAILURE(
       assertEqualResults({shortDecimal}, {longDecimal}),
