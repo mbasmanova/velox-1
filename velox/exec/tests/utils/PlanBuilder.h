@@ -662,6 +662,13 @@ class PlanBuilder {
   ///  rows between a + 10 preceding and 10 following)"
   PlanBuilder& window(const std::vector<std::string>& windowFunctions);
 
+  PlanBuilder& markDistinct(
+      std::shared_ptr<const core::FieldAccessTypedExpr> markerVariable,
+      std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
+          distinctVariables,
+      std::optional<std::shared_ptr<const core::FieldAccessTypedExpr>>
+          hashVariable);
+
   /// Stores the latest plan node ID into the specified variable. Useful for
   /// capturing IDs of the leaf plan nodes (table scans, exchanges, etc.) to use
   /// when adding splits at runtime.

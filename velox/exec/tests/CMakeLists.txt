@@ -47,6 +47,7 @@ add_executable(
   PrintPlanWithStatsTest.cpp
   RoundRobinPartitionFunctionTest.cpp
   RowContainerTest.cpp
+  MarkDistinctTest.cpp
   MemoryCapExceededTest.cpp
   QueryAssertionsTest.cpp
   SpillTest.cpp

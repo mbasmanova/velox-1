@@ -563,6 +563,34 @@ WindowNode::WindowNode(
 }
 
 namespace {
+RowTypePtr getMarkDistinctOutputType(
+    const RowTypePtr& inputType,
+    const FieldAccessTypedExprPtr& markerVariable) {
+  std::vector<std::string> names = inputType->names();
+  std::vector<TypePtr> types = inputType->children();
+
+  names.emplace_back(markerVariable->name());
+  types.emplace_back(markerVariable->type());
+  return ROW(std::move(names), std::move(types));
+}
+} // namespace
+
+MarkDistinctNode::MarkDistinctNode(
+    PlanNodeId id,
+    FieldAccessTypedExprPtr markerVariable,
+    std::vector<FieldAccessTypedExprPtr> distinctVariables,
+    std::optional<FieldAccessTypedExprPtr> hashVariable,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      markerVariable_(markerVariable),
+      distinctVariables_(distinctVariables),
+      hashVariable_(hashVariable),
+      sources_{std::move(source)},
+      outputType_(getMarkDistinctOutputType(
+          sources_[0]->outputType(),
+          markerVariable)) {}
+
+namespace {
 void addSortingKeys(
     std::stringstream& stream,
     const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
@@ -665,6 +693,22 @@ void WindowNode::addDetails(std::stringstream& stream) const {
     }
     stream << outputType_->names()[i] << " := ";
     addWindowFunction(stream, windowFunctions_[i - numInputCols]);
+  }
+}
+
+void MarkDistinctNode::addDetails(std::stringstream& stream) const {
+  stream << "marker [";
+  stream << markerVariable_;
+  stream << "] ";
+
+  stream << "distinct variables [";
+  addFields(stream, distinctVariables_);
+  stream << "] ";
+
+  if (hashVariable_) {
+    stream << "hash variable [";
+    stream << hashVariable_.value();
+    stream << "] ";
   }
 }
 

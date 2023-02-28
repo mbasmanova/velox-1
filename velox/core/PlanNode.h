@@ -1782,4 +1782,52 @@ class WindowNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+class MarkDistinctNode : public PlanNode {
+ public:
+  MarkDistinctNode(
+      PlanNodeId id,
+      FieldAccessTypedExprPtr markerVariable,
+      std::vector<FieldAccessTypedExprPtr> distinctVariables,
+      std::optional<FieldAccessTypedExprPtr> hashVariable,
+      PlanNodePtr source);
+
+  const std::vector<PlanNodePtr>& sources() const override {
+    return sources_;
+  }
+
+  /// The outputType is the concatenation of the input columns
+  /// with the output columns of each window function.
+  const RowTypePtr& outputType() const override {
+    return outputType_;
+  }
+
+  std::string_view name() const override {
+    return "MarkDistinct";
+  }
+
+  const FieldAccessTypedExprPtr getMarkerVariable() const {
+    return markerVariable_;
+  }
+
+  const std::vector<FieldAccessTypedExprPtr> getDistinctVariables() const {
+    return distinctVariables_;
+  }
+
+  const std::optional<FieldAccessTypedExprPtr> getHashVariable() const {
+    return hashVariable_;
+  }
+
+ private:
+  void addDetails(std::stringstream& stream) const override;
+  const FieldAccessTypedExprPtr markerVariable_;
+
+  const std::vector<FieldAccessTypedExprPtr> distinctVariables_;
+
+  const std::optional<FieldAccessTypedExprPtr> hashVariable_;
+
+  const std::vector<PlanNodePtr> sources_;
+
+  const RowTypePtr outputType_;
+};
+
 } // namespace facebook::velox::core
