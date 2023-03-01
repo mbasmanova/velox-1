@@ -788,7 +788,7 @@ core::TypedExprPtr ExpressionFuzzer::getCallExprFromCallable(
       callable.returnType, args, callable.name);
 }
 
-core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
+const CallableSignature* ExpressionFuzzer::chooseRandomConcreteSignature(
     const TypePtr& returnType,
     const std::string& functionName) {
   if (expressionToSignature_.find(functionName) ==
@@ -816,7 +816,16 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
   // Randomly pick a function that can return `returnType`.
   size_t idx = boost::random::uniform_int_distribution<uint32_t>(
       0, eligible.size() - 1)(rng_);
-  const auto& chosen = eligible[idx];
+  return eligible[idx];
+}
+
+core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
+    const TypePtr& returnType,
+    const std::string& functionName) {
+  const auto* chosen = chooseRandomConcreteSignature(returnType, functionName);
+  if (!chosen) {
+    return nullptr;
+  }
 
   markSelected(chosen->name);
   return getCallExprFromCallable(*chosen);
@@ -904,20 +913,18 @@ TypePtr ExpressionFuzzer::chooseCastFromType(const TypePtr& to) {
 
 core::TypedExprPtr ExpressionFuzzer::generateCastExpression(
     const TypePtr& returnType) {
-  // Choose a random from type.
-  auto fromType = chooseCastFromType(returnType);
-  if (!fromType) {
+  const auto* callable = chooseRandomConcreteSignature(returnType, "cast");
+  if (!callable) {
     return nullptr;
   }
 
-  CallableSignature callable{"cast", {fromType}, false, returnType};
-  auto args = getArgsForCallable(callable);
+  auto args = getArgsForCallable(*callable);
 
   // Generate try_cast expression with 50% chance.
   bool nullOnFailure =
       boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
   return std::make_shared<core::CastTypedExpr>(
-      callable.returnType, args, nullOnFailure);
+      callable->returnType, args, nullOnFailure);
 }
 
 template <typename T>

@@ -189,6 +189,13 @@ class ExpressionFuzzer {
 
   core::TypedExprPtr getCallExprFromCallable(const CallableSignature& callable);
 
+  /// Return a random signature mapped to functionName in expressionToSignature_
+  /// whose return type can match returnType. Return nullptr if no such
+  /// signature template exists.
+  const CallableSignature* chooseRandomConcreteSignature(
+      const TypePtr& returnType,
+      const std::string& functionName);
+
   /// Generate an expression by randomly selecting a concrete function signature
   /// that returns 'returnType' among all signatures that the function named
   /// 'functionName' supports.
