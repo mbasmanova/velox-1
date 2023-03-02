@@ -68,10 +68,7 @@ void addCastFromDateSignature(
   signatures.push_back(makeCastSignature("date", toType));
 }
 
-} // namespace
-
-// static
-void FuzzerRunner::addSignaturesForCast() {
+std::vector<facebook::velox::exec::FunctionSignaturePtr> getSignaturesForCast() {
   std::vector<facebook::velox::exec::FunctionSignaturePtr> signatures;
 
   // To integral types.
@@ -123,14 +120,15 @@ void FuzzerRunner::addSignaturesForCast() {
     signatures.push_back(makeCastSignature(
         fmt::format("row({})", from), fmt::format("row({})", to)));
   }
-  specialFormSignatures.emplace("cast", signatures);
+  return signatures;
 }
+} // namespace
 
 // static
-std::unordered_map<
+const std::unordered_map<
     std::string,
     std::vector<facebook::velox::exec::FunctionSignaturePtr>>
-    FuzzerRunner::specialFormSignatures = {
+    FuzzerRunner::kSpecialForms = {
         {"and",
          std::vector<facebook::velox::exec::FunctionSignaturePtr>{
              // Signature: and (condition,...) -> output:
@@ -198,5 +196,9 @@ std::unordered_map<
                     .argumentType("T")
                     .returnType("T")
                     .build()},
+        },
+        {
+            "cast",
+            getSignaturesForCast(),
         },
 };

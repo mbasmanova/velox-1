@@ -106,22 +106,16 @@ class FuzzerRunner {
     return output;
   }
 
-  static std::unordered_map<
+  static const std::unordered_map<
       std::string,
       std::vector<facebook::velox::exec::FunctionSignaturePtr>>
-      specialFormSignatures;
-
-  /// Add supported signatures for the Cast special form for basic types.
-  /// TODO: Add supported Cast signatures to CastTypedExpr and expose them to
-  /// fuzzer instead of hard-coding signatures here.
-  static void addSignaturesForCast();
+      kSpecialForms;
 
   static void appendSpecialForms(
       const std::string& specialForms,
       facebook::velox::FunctionSignatureMap& signatureMap) {
     auto specialFormNames = splitNames(specialForms);
-    addSignaturesForCast();
-    for (const auto& [name, signatures] : specialFormSignatures) {
+    for (const auto& [name, signatures] : kSpecialForms) {
       if (specialFormNames.count(name) == 0) {
         LOG(INFO) << "Skipping special form: " << name;
         continue;
