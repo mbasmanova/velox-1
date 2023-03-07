@@ -1782,6 +1782,15 @@ class WindowNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+/// The MarkDistinct operator is used to produce aggregate mask channels for
+/// distinct aggregations. The mask channel is a boolean vector set to true for
+/// input all rows that contain new unique combination of grouping keys and
+/// distinct aggregate column values.
+/// @param markerVariable Name of the output mask channel.
+/// @param distinctVariables Names of grouping keys and distinct aggregate
+/// column.
+/// @param hashVariable Optional. Name of channel that contains pre-computed
+/// hash of grouping keys and distinct aggregate column.
 class MarkDistinctNode : public PlanNode {
  public:
   MarkDistinctNode(
@@ -1795,8 +1804,7 @@ class MarkDistinctNode : public PlanNode {
     return sources_;
   }
 
-  /// The outputType is the concatenation of the input columns
-  /// with the output columns of each window function.
+  /// The outputType is the concatenation of the input columns and mask column.
   const RowTypePtr& outputType() const override {
     return outputType_;
   }
@@ -1805,15 +1813,15 @@ class MarkDistinctNode : public PlanNode {
     return "MarkDistinct";
   }
 
-  const FieldAccessTypedExprPtr getMarkerVariable() const {
+  const FieldAccessTypedExprPtr& markerVariable() const {
     return markerVariable_;
   }
 
-  const std::vector<FieldAccessTypedExprPtr> getDistinctVariables() const {
+  const std::vector<FieldAccessTypedExprPtr>& distinctVariables() const {
     return distinctVariables_;
   }
 
-  const std::optional<FieldAccessTypedExprPtr> getHashVariable() const {
+  const std::optional<FieldAccessTypedExprPtr>& hashVariable() const {
     return hashVariable_;
   }
 

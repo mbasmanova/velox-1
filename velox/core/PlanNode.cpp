@@ -582,13 +582,13 @@ MarkDistinctNode::MarkDistinctNode(
     std::optional<FieldAccessTypedExprPtr> hashVariable,
     PlanNodePtr source)
     : PlanNode(std::move(id)),
-      markerVariable_(markerVariable),
-      distinctVariables_(distinctVariables),
-      hashVariable_(hashVariable),
+      markerVariable_(std::move(markerVariable)),
+      distinctVariables_(std::move(distinctVariables)),
+      hashVariable_(std::move(hashVariable)),
       sources_{std::move(source)},
       outputType_(getMarkDistinctOutputType(
           sources_[0]->outputType(),
-          markerVariable)) {}
+          markerVariable_)) {}
 
 namespace {
 void addSortingKeys(
@@ -698,7 +698,7 @@ void WindowNode::addDetails(std::stringstream& stream) const {
 
 void MarkDistinctNode::addDetails(std::stringstream& stream) const {
   stream << "marker [";
-  stream << markerVariable_;
+  stream << markerVariable_->name();
   stream << "] ";
 
   stream << "distinct variables [";

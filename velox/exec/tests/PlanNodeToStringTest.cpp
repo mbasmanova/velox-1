@@ -626,3 +626,21 @@ TEST_F(PlanNodeToStringTest, window) {
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, w0:BIGINT\n",
       plan->toString(true, false));
 }
+
+TEST_F(PlanNodeToStringTest, markDistinct) {
+  auto field1 =
+      std::make_shared<const core::FieldAccessTypedExpr>(BOOLEAN(), "c0");
+
+  auto markerVariable = std::make_shared<const core::FieldAccessTypedExpr>(
+      BOOLEAN(), "c0$Distinct");
+
+  auto op =
+      PlanBuilder()
+          .tableScan(ROW({"a", "b", "c"}, {VARCHAR(), BIGINT(), BIGINT()}))
+          .markDistinct(markerVariable, {field1}, std::nullopt)
+          .planNode();
+  ASSERT_EQ("-- MarkDistinct\n", op->toString());
+  ASSERT_EQ(
+      "-- MarkDistinct[marker [c0$Distinct] distinct variables [c0] ] -> a:VARCHAR, b:BIGINT, c:BIGINT, \"c0$Distinct\":BOOLEAN\n",
+      op->toString(true, false));
+}

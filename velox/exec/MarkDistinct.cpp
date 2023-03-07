@@ -44,11 +44,11 @@ MarkDistinct::MarkDistinct(
   resultProjections_.emplace_back(0, inputType->size());
 
   // Initialize groupingset
-  auto numHashers = planNode.get()->getDistinctVariables().size();
+  auto numHashers = planNode.get()->distinctVariables().size();
   std::vector<std::unique_ptr<VectorHasher>> hashers;
   hashers.reserve(numHashers);
 
-  for (const auto& distinctVariable : planNode.get()->getDistinctVariables()) {
+  for (const auto& distinctVariable : planNode.get()->distinctVariables()) {
     auto channel = exprToChannel(distinctVariable.get(), inputType);
     hashers.push_back(VectorHasher::create(distinctVariable->type(), channel));
   }
@@ -76,7 +76,6 @@ MarkDistinct::MarkDistinct(
 
   // Set up result
   results_.resize(1);
-  results_[0] = BaseVector::create(BOOLEAN(), 0, operatorCtx_->pool());
 }
 
 void MarkDistinct::addInput(RowVectorPtr input) {
@@ -101,7 +100,8 @@ RowVectorPtr MarkDistinct::getOutput() {
   }
 
   auto outputSize = input_->size();
-  results_[0].get()->resize(outputSize);
+  // Each input gets a newly allocated mask column.
+  results_[0] = BaseVector::create(BOOLEAN(), outputSize, operatorCtx_->pool());
 
   // newGroups contains the indices of distinct rows.
   // For each index in newGroups, we mark the index'th bit true in the result
@@ -109,22 +109,17 @@ RowVectorPtr MarkDistinct::getOutput() {
   auto resultBits =
       results_[0]->as<FlatVector<bool>>()->mutableRawValues<uint64_t>();
 
-  auto newGroupIter = groupingSet_->hashLookup().newGroups.cbegin();
-  const auto newGroupIterEnd = groupingSet_->hashLookup().newGroups.cend();
-  for (vector_size_t i = 0; i < outputSize; i++) {
-    if (newGroupIter != newGroupIterEnd && i == *newGroupIter) {
-      bits::setBit(resultBits, i, true);
-      newGroupIter++;
-    } else {
-      bits::setBit(resultBits, i, false);
-    }
+  bits::fillBits(resultBits, 0, outputSize, false);
+  for (const auto i : groupingSet_->hashLookup().newGroups) {
+    bits::setBit(resultBits, i, true);
   }
-
   auto output = fillOutput(outputSize, nullptr);
 
   // Drop reference to input_ to make it singly-referenced at the producer and
   // allow for memory reuse.
   input_ = nullptr;
+  // Drop reference to output mask channel vector.
+  results_[0].reset();
 
   return output;
 }

@@ -662,6 +662,10 @@ class PlanBuilder {
   ///  rows between a + 10 preceding and 10 following)"
   PlanBuilder& window(const std::vector<std::string>& windowFunctions);
 
+  /// Add a MarkDistinct operator to compute aggregate mask channel
+  /// @param markerVariable Name of output mask channel
+  /// @param distinctVariables List of columns to be marked distinct.
+  /// @param hashVariable Channel of precomputed hash of distinctVariables.
   PlanBuilder& markDistinct(
       std::shared_ptr<const core::FieldAccessTypedExpr> markerVariable,
       std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>

@@ -55,6 +55,7 @@ LocalPartitionNode          LocalPartition and LocalExchange
 EnforceSingleRowNode        EnforceSingleRow
 AssignUniqueIdNode          AssignUniqueId
 WindowNode                  Window
+MarkDistinctNode            MarkDistinct
 ==========================  ==============================================   ===========================
 
 Plan Nodes
@@ -535,6 +536,27 @@ If no sorting columns are specified then the order of the results is unspecified
     - Output column names for each window function invocation in windowFunctions list below.
   * - windowFunctions
     - Window function calls with the frame clause. e.g row_number(), first_value(name) between range 10 preceding and current row. The default frame is between range unbounded preceding and current row.
+
+MarkDistinctNode
+~~~~~~~~~~
+
+The MarkDistinct operator is used to produce aggregate mask channels for distinct aggregations.
+The mask channel is a boolean vector set to true for input all rows that contain new unique combination of grouping keys
+and distinct aggregate column values.
+
+.. list-table::
+  :widths: 10 30
+  :align: left
+  :header-rows: 1
+
+  * - Property
+    - Description
+  * - markerVariable
+    - Name of the output mask channel.
+  * - distinctVariables
+    - Names of grouping keys and distinct aggregate column.
+  * - hashVariable
+    - Optional. Name of channel that contains pre-computed hash of grouping keys and distinct aggregate column.
 
 Examples
 --------
