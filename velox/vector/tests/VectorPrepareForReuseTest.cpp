@@ -228,96 +228,53 @@ TEST_F(VectorPrepareForReuseTest, arrays) {
 }
 
 TEST_F(VectorPrepareForReuseTest, dataDependentFlags) {
-  auto kSize = 10;
-  auto nulls = allocateNulls(kSize, pool());
-  auto* rawNulls = nulls->asMutable<uint64_t>();
-  bits::setNull(rawNulls, kSize - 1, true);
+  auto prepareStatic = [](VectorPtr& vector) {
+    BaseVector::prepareForReuse(vector, vector->size());
+  };
+
+  auto prepareInstance = [](VectorPtr& vector) { vector->prepareForReuse(); };
 
   // Primitive flat vector.
   {
-    test::checkVectorFlagsReset<FlatVector<StringView>>(
-        pool(),
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeFlatVectorWithFlags(size, nulls, pool);
-        },
-        [](FlatVectorPtr<StringView>& vector, VectorPtr& /*resultHolder*/) {
-          vector->prepareForReuse();
-          return vector.get();
-        });
+    SCOPED_TRACE("Flat");
+    auto createVector = [&](auto size, const auto& nulls) {
+      return test::makeFlatVectorWithFlags(size, nulls, pool());
+    };
 
-    test::checkVectorFlagsReset<FlatVector<StringView>>(
-        pool(),
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeFlatVectorWithFlags(size, nulls, pool);
-        },
-        [](FlatVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::prepareForReuse(resultHolder, resultHolder->size());
-          return resultHolder->asFlatVector<StringView>();
-        });
+    test::checkVectorFlagsReset(pool(), createVector, prepareInstance);
+    test::checkVectorFlagsReset(pool(), createVector, prepareStatic);
   }
 
   // Constant vector.
   {
-    test::checkVectorFlagsReset<ConstantVector<StringView>>(
+    SCOPED_TRACE("Constant");
+    test::checkVectorFlagsReset(
         pool(),
-        [](vector_size_t size,
-           const BufferPtr& /*nulls*/,
-           memory::MemoryPool* pool) {
-          return test::makeConstantVectorWithFlags(size, pool);
+        [&](auto size, const auto& /*nulls*/) {
+          return test::makeConstantVectorWithFlags(size, pool());
         },
-        [](ConstantVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::prepareForReuse(resultHolder, resultHolder->size());
-          return resultHolder->asFlatVector<StringView>();
-        });
+        prepareStatic);
   }
 
   // Dictionary vector.
   {
-    test::checkVectorFlagsReset<DictionaryVector<StringView>>(
+    SCOPED_TRACE("Dictionary");
+    test::checkVectorFlagsReset(
         pool(),
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeDictionaryVectorWithFlags(size, nulls, pool);
+        [&](auto size, const auto& nulls) {
+          return test::makeDictionaryVectorWithFlags(size, nulls, pool());
         },
-        [](DictionaryVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::prepareForReuse(resultHolder, resultHolder->size());
-          return resultHolder->asFlatVector<StringView>();
-        });
+        prepareStatic);
   }
 
   // Map vector.
   {
-    test::checkVectorFlagsReset<MapVector>(
-        pool(),
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeMapVectorWithFlags(size, nulls, pool);
-        },
-        [](MapVectorPtr& vector, VectorPtr& /*resultHolder*/) {
-          vector->prepareForReuse();
-          return vector.get();
-        });
+    SCOPED_TRACE("Map");
+    auto createVector = [&](auto size, const auto& nulls) {
+      return test::makeMapVectorWithFlags(size, nulls, pool());
+    };
 
-    test::checkVectorFlagsReset<MapVector>(
-        pool(),
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeMapVectorWithFlags(size, nulls, pool);
-        },
-        [](MapVectorPtr& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::prepareForReuse(resultHolder, resultHolder->size());
-          return resultHolder->as<MapVector>();
-        });
+    test::checkVectorFlagsReset(pool(), createVector, prepareInstance);
+    test::checkVectorFlagsReset(pool(), createVector, prepareStatic);
   }
 }

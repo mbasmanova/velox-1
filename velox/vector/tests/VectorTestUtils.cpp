@@ -19,27 +19,7 @@
 
 namespace facebook::velox::test {
 
-void checkBaseVectorFlagsSet(const BaseVector& vector) {
-  EXPECT_TRUE(vector.getNullCount().has_value());
-  EXPECT_TRUE(vector.getDistinctValueCount().has_value());
-  EXPECT_TRUE(vector.representedBytes().has_value());
-  EXPECT_TRUE(vector.storageBytes().has_value());
-}
-
-void checkBaseVectorFlagsCleared(const BaseVector& vector) {
-  EXPECT_FALSE(vector.getNullCount().has_value());
-  EXPECT_FALSE(vector.getDistinctValueCount().has_value());
-  EXPECT_FALSE(vector.representedBytes().has_value());
-  EXPECT_FALSE(vector.storageBytes().has_value());
-}
-
-void checkVectorFlagsSet(const MapVector& vector) {
-  EXPECT_TRUE(vector.hasSortedKeys());
-}
-
-void checkVectorFlagsCleared(const MapVector& vector) {
-  EXPECT_FALSE(vector.hasSortedKeys());
-}
+void checkVectorFlagsSet(const BaseVector& vector);
 
 FlatVectorPtr<StringView> makeFlatVectorWithFlags(
     vector_size_t kSize,
@@ -60,7 +40,6 @@ FlatVectorPtr<StringView> makeFlatVectorWithFlags(
       /*representedBytes*/ 0,
       /*storageByteCount*/ 0);
   vector->computeAndSetIsAscii(SelectivityVector(kSize - 1));
-  checkVectorFlagsSet(*vector);
   return vector;
 }
 
@@ -77,62 +56,159 @@ ConstantVectorPtr<StringView> makeConstantVectorWithFlags(
       /*representedBytes*/ 0,
       /*storageByteCount*/ 0);
   vector->computeAndSetIsAscii(SelectivityVector(kSize));
-  checkVectorFlagsSet(*vector);
   return vector;
 }
 
 DictionaryVectorPtr<StringView> makeDictionaryVectorWithFlags(
-    vector_size_t kSize,
+    vector_size_t size,
     const BufferPtr& nulls,
     memory::MemoryPool* pool) {
-  auto base = BaseVector::createConstant(VARCHAR(), "a", kSize, pool);
+  auto base = BaseVector::createConstant(VARCHAR(), "a", size, pool);
   auto vector = std::make_shared<DictionaryVector<StringView>>(
       pool,
       nulls,
-      kSize,
+      size,
       base,
       test::makeIndices(
-          kSize, [](auto row) { return row; }, pool),
+          size, [](auto row) { return row; }, pool),
       /*stats*/ SimpleVectorStats<StringView>{"a"_sv, "a"_sv},
       /*distinctValueCount*/ 1,
       /*nullCount*/ 1,
       /*isSorted*/ true,
       /*representedBytes*/ 0,
       /*storageByteCount*/ 0);
-  vector->computeAndSetIsAscii(SelectivityVector(kSize - 1));
-  checkVectorFlagsSet(*vector);
+  vector->computeAndSetIsAscii(SelectivityVector(size - 1));
   return vector;
 }
 
 MapVectorPtr makeMapVectorWithFlags(
-    vector_size_t kSize,
+    vector_size_t size,
     const BufferPtr& nulls,
     memory::MemoryPool* pool) {
-  auto keys = BaseVector::createConstant(VARCHAR(), "a", kSize, pool);
-  auto values = BaseVector::createConstant(VARCHAR(), "b", kSize, pool);
+  auto mapVector =
+      BaseVector::create<MapVector>(MAP(VARCHAR(), VARCHAR()), size, pool);
+  MapVector::canonicalize(mapVector);
+  mapVector->setNullCount(BaseVector::countNulls(nulls, size));
+  return mapVector;
+}
 
-  auto offsets = allocateOffsets(kSize, pool);
-  auto* rawOffsets = offsets->asMutable<vector_size_t>();
-  auto sizes = allocateSizes(kSize, pool);
-  auto* rawSizes = sizes->asMutable<vector_size_t>();
-  for (auto i = 0; i < kSize; ++i) {
-    rawOffsets[i] = i;
-    rawSizes[i] = 1;
+namespace {
+
+void checkBaseVectorFlagsSet(const BaseVector& vector) {
+  EXPECT_TRUE(vector.getNullCount().has_value());
+  EXPECT_TRUE(vector.getDistinctValueCount().has_value());
+  EXPECT_TRUE(vector.representedBytes().has_value());
+  EXPECT_TRUE(vector.storageBytes().has_value());
+}
+
+void checkBaseVectorFlagsCleared(const BaseVector& vector) {
+  EXPECT_FALSE(vector.getNullCount().has_value());
+  EXPECT_FALSE(vector.getDistinctValueCount().has_value());
+  EXPECT_FALSE(vector.representedBytes().has_value());
+  EXPECT_FALSE(vector.storageBytes().has_value());
+}
+
+template <TypeKind kind>
+void checkVectorFlagsClearedTyped(const BaseVector& vector) {
+  using T = typename TypeTraits<kind>::NativeType;
+
+  auto simpleVector = vector.as<SimpleVector<T>>();
+  EXPECT_FALSE(simpleVector->getStats().min.has_value());
+  EXPECT_FALSE(simpleVector->getStats().max.has_value());
+  EXPECT_FALSE(simpleVector->isSorted().has_value());
+
+  if constexpr (std::is_same_v<T, StringView>) {
+    EXPECT_FALSE(simpleVector->isAscii(0).has_value());
+  }
+}
+
+template <>
+void checkVectorFlagsClearedTyped<TypeKind::MAP>(const BaseVector& vector) {
+  auto mapVector = vector.as<MapVector>();
+  EXPECT_FALSE(mapVector->hasSortedKeys());
+}
+
+template <>
+void checkVectorFlagsClearedTyped<TypeKind::ARRAY>(const BaseVector& vector) {}
+
+template <>
+void checkVectorFlagsClearedTyped<TypeKind::ROW>(const BaseVector& vector) {}
+
+template <TypeKind kind>
+void checkVectorFlagsSetTyped(const BaseVector& vector) {
+  using T = typename TypeTraits<kind>::NativeType;
+
+  checkBaseVectorFlagsSet(vector);
+
+  auto simpleVector = vector.as<SimpleVector<T>>();
+
+  EXPECT_TRUE(simpleVector->getStats().min.has_value());
+  EXPECT_TRUE(simpleVector->getStats().max.has_value());
+  EXPECT_TRUE(simpleVector->isSorted().has_value());
+
+  if constexpr (std::is_same_v<T, StringView>) {
+    EXPECT_TRUE(simpleVector->isAscii(0).has_value());
+  }
+}
+
+template <>
+void checkVectorFlagsSetTyped<TypeKind::MAP>(const BaseVector& vector) {
+  EXPECT_TRUE(vector.getNullCount().has_value());
+
+  auto mapVector = vector.as<MapVector>();
+  EXPECT_TRUE(mapVector->hasSortedKeys());
+}
+
+template <>
+void checkVectorFlagsSetTyped<TypeKind::ARRAY>(const BaseVector& vector) {
+  EXPECT_TRUE(vector.getNullCount().has_value());
+}
+
+template <>
+void checkVectorFlagsSetTyped<TypeKind::ROW>(const BaseVector& vector) {
+  EXPECT_TRUE(vector.getNullCount().has_value());
+}
+} // namespace
+
+void checkVectorFlagsCleared(const BaseVector& vector) {
+  checkBaseVectorFlagsCleared(vector);
+  VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+      checkVectorFlagsClearedTyped, vector.typeKind(), vector);
+}
+
+void checkVectorFlagsSet(const BaseVector& vector) {
+  VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+      checkVectorFlagsSetTyped, vector.typeKind(), vector);
+}
+
+void checkVectorFlagsReset(
+    memory::MemoryPool* pool,
+    const std::function<VectorPtr(vector_size_t size, const BufferPtr& nulls)>&
+        createVector,
+    const std::function<void(VectorPtr& vector)>& makeMutable) {
+  auto kSize = 10;
+  auto nulls = allocateNulls(kSize, pool);
+  auto* rawNulls = nulls->asMutable<uint64_t>();
+  bits::setNull(rawNulls, kSize - 1, true);
+
+  auto vector = createVector(kSize, nulls);
+  checkVectorFlagsSet(*vector);
+  auto another = vector;
+  makeMutable(vector);
+  checkVectorFlagsCleared(*vector);
+
+  vector = createVector(kSize, nulls);
+  if (vector->isFlatEncoding()) {
+    checkVectorFlagsSet(*vector);
+    auto values = vector->values();
+    makeMutable(vector);
+    checkVectorFlagsCleared(*vector);
   }
 
-  auto vector = std::make_shared<MapVector>(
-      pool,
-      MAP(VARCHAR(), VARCHAR()),
-      nulls,
-      kSize,
-      offsets,
-      sizes,
-      keys,
-      values,
-      /*nullCount*/ 1,
-      /*sortedKeys*/ true);
+  vector = createVector(kSize, nulls);
   checkVectorFlagsSet(*vector);
-  return vector;
+  makeMutable(vector);
+  checkVectorFlagsCleared(*vector);
 }
 
 } // namespace facebook::velox::test

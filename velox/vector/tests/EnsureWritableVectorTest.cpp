@@ -840,101 +840,58 @@ TEST_F(EnsureWritableVectorTest, booleanFlatVector) {
 }
 
 TEST_F(EnsureWritableVectorTest, dataDependentFlags) {
-  auto kSize = 10;
   auto pool = pool_.get();
-  auto nulls = allocateNulls(kSize, pool);
-  auto* rawNulls = nulls->asMutable<uint64_t>();
-  bits::setNull(rawNulls, kSize - 1, true);
+
+  auto ensureWritableStatic = [](VectorPtr& vector) {
+    BaseVector::ensureWritable(
+        SelectivityVector(1), vector->type(), vector->pool(), vector);
+  };
+
+  auto ensureWritableInstance = [](VectorPtr& vector) {
+    vector->ensureWritable(SelectivityVector(1));
+  };
 
   // Primitive flat vector.
   {
-    test::checkVectorFlagsReset<FlatVector<StringView>>(
-        pool,
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeFlatVectorWithFlags(size, nulls, pool);
-        },
-        [](FlatVectorPtr<StringView>& vector, VectorPtr& /*resultHolder*/) {
-          vector->ensureWritable(SelectivityVector(1));
-          return vector.get();
-        });
+    SCOPED_TRACE("Flat");
+    auto createVector = [&](auto size, const auto& nulls) {
+      return test::makeFlatVectorWithFlags(size, nulls, pool);
+    };
 
-    test::checkVectorFlagsReset<FlatVector<StringView>>(
-        pool,
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeFlatVectorWithFlags(size, nulls, pool);
-        },
-        [](FlatVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::ensureWritable(
-              SelectivityVector(1), VARCHAR(), vector->pool(), resultHolder);
-          return resultHolder->asFlatVector<StringView>();
-        });
+    test::checkVectorFlagsReset(pool, createVector, ensureWritableInstance);
+    test::checkVectorFlagsReset(pool, createVector, ensureWritableStatic);
   }
 
   // Constant vector.
   {
-    test::checkVectorFlagsReset<ConstantVector<StringView>>(
+    SCOPED_TRACE("Constant");
+    test::checkVectorFlagsReset(
         pool,
-        [](vector_size_t size,
-           const BufferPtr& /*nulls*/,
-           memory::MemoryPool* pool) {
+        [&](auto size, const auto& /*nulls*/) {
           return test::makeConstantVectorWithFlags(size, pool);
         },
-        [](ConstantVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::ensureWritable(
-              SelectivityVector(1), VARCHAR(), vector->pool(), resultHolder);
-          return resultHolder->asFlatVector<StringView>();
-        });
+        ensureWritableStatic);
   }
 
   // Dictionary vector.
   {
-    test::checkVectorFlagsReset<DictionaryVector<StringView>>(
+    SCOPED_TRACE("Dictionary");
+    test::checkVectorFlagsReset(
         pool,
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
+        [&](auto size, const auto& nulls) {
           return test::makeDictionaryVectorWithFlags(size, nulls, pool);
         },
-        [](DictionaryVectorPtr<StringView>& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::ensureWritable(
-              SelectivityVector(1), VARCHAR(), vector->pool(), resultHolder);
-          return resultHolder->asFlatVector<StringView>();
-        });
+        ensureWritableStatic);
   }
 
   // Map vector.
   {
-    test::checkVectorFlagsReset<MapVector>(
-        pool,
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeMapVectorWithFlags(size, nulls, pool);
-        },
-        [](MapVectorPtr& vector, VectorPtr& /*resultHolder*/) {
-          vector->ensureWritable(SelectivityVector(1));
-          return vector.get();
-        });
+    SCOPED_TRACE("Map");
+    auto createVector = [&](auto size, const auto& nulls) {
+      return test::makeMapVectorWithFlags(size, nulls, pool);
+    };
 
-    test::checkVectorFlagsReset<MapVector>(
-        pool,
-        [](vector_size_t size,
-           const BufferPtr& nulls,
-           memory::MemoryPool* pool) {
-          return test::makeMapVectorWithFlags(size, nulls, pool);
-        },
-        [](MapVectorPtr& vector, VectorPtr& resultHolder) {
-          resultHolder = vector;
-          BaseVector::ensureWritable(
-              SelectivityVector(1), VARCHAR(), vector->pool(), resultHolder);
-          return resultHolder->as<MapVector>();
-        });
+    test::checkVectorFlagsReset(pool, createVector, ensureWritableInstance);
+    test::checkVectorFlagsReset(pool, createVector, ensureWritableStatic);
   }
 }
