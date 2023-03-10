@@ -62,7 +62,7 @@ class MarkDistinctTest : public OperatorTestBase {
 
     auto op = PlanBuilder()
                   .values(vectors)
-                  .markDistinct("c0$Distinct", {"c0"}, std::nullopt)
+                  .markDistinct("c0$Distinct", {"c0"})
                   .planNode();
 
     CursorParameters params;
@@ -153,8 +153,8 @@ TEST_F(MarkDistinctTest, distinctAggregationTest) {
   auto op =
       PlanBuilder()
           .values(vectors)
-          .markDistinct("c1$Distinct", {"c0", "c1"}, std::nullopt)
-          .markDistinct("c2$Distinct", {"c0", "c2"}, std::nullopt)
+          .markDistinct("c1$Distinct", {"c0", "c1"})
+          .markDistinct("c2$Distinct", {"c0", "c2"})
           .singleAggregation(
               {"c0"}, {"sum(c1)", "sum(c2)"}, {"c1$Distinct", "c2$Distinct"})
           .orderBy({"c0"}, false)

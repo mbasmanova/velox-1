@@ -579,12 +579,10 @@ MarkDistinctNode::MarkDistinctNode(
     PlanNodeId id,
     FieldAccessTypedExprPtr markerKey,
     std::vector<FieldAccessTypedExprPtr> distinctKeys,
-    std::optional<FieldAccessTypedExprPtr> hashKey,
     PlanNodePtr source)
     : PlanNode(std::move(id)),
       markerKey_(std::move(markerKey)),
       distinctKeys_(std::move(distinctKeys)),
-      hashKey_(std::move(hashKey)),
       sources_{std::move(source)},
       outputType_(
           getMarkDistinctOutputType(sources_[0]->outputType(), markerKey_)) {
@@ -706,12 +704,6 @@ void MarkDistinctNode::addDetails(std::stringstream& stream) const {
   stream << "distinct variables [";
   addFields(stream, distinctKeys_);
   stream << "] ";
-
-  if (hashKey_) {
-    stream << "hash variable [";
-    stream << hashKey_.value();
-    stream << "] ";
-  }
 }
 
 void PlanNode::toString(

@@ -631,10 +631,10 @@ TEST_F(PlanNodeToStringTest, markDistinct) {
   auto op =
       PlanBuilder()
           .tableScan(ROW({"a", "b", "c"}, {VARCHAR(), BIGINT(), BIGINT()}))
-          .markDistinct("c0$Distinct", {"c0"}, std::nullopt)
+          .markDistinct("c0$Distinct", {"a"})
           .planNode();
   ASSERT_EQ("-- MarkDistinct\n", op->toString());
   ASSERT_EQ(
-      "-- MarkDistinct[marker [c0$Distinct] distinct variables [c0] ] -> a:VARCHAR, b:BIGINT, c:BIGINT, \"c0$Distinct\":BOOLEAN\n",
+      "-- MarkDistinct[marker [c0$Distinct] distinct variables [a] ] -> a:VARCHAR, b:BIGINT, c:BIGINT, \"c0$Distinct\":BOOLEAN\n",
       op->toString(true, false));
 }

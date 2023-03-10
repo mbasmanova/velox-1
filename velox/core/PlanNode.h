@@ -1797,7 +1797,6 @@ class MarkDistinctNode : public PlanNode {
       PlanNodeId id,
       FieldAccessTypedExprPtr markerKey,
       std::vector<FieldAccessTypedExprPtr> distinctKeys,
-      std::optional<FieldAccessTypedExprPtr> hashKey,
       PlanNodePtr source);
 
   const std::vector<PlanNodePtr>& sources() const override {
@@ -1826,8 +1825,6 @@ class MarkDistinctNode : public PlanNode {
   const FieldAccessTypedExprPtr markerKey_;
 
   const std::vector<FieldAccessTypedExprPtr> distinctKeys_;
-
-  const std::optional<FieldAccessTypedExprPtr> hashKey_;
 
   const std::vector<PlanNodePtr> sources_;
 

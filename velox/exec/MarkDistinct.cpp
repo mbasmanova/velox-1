@@ -68,19 +68,8 @@ MarkDistinct::MarkDistinct(
   // 1. It handles hash collisions. (must for correctness).
   // 2. It is faster. (According to
   // https://github.com/facebookincubator/velox/pull/2321/commits/225ab35c5834cb68acee9199fa4f7fd0513e7715#r951849869)
-  groupingSet_ = std::make_unique<GroupingSet>(
-      std::move(hashers),
-      std::vector<column_index_t>{},
-      std::vector<std::unique_ptr<Aggregate>>{},
-      std::vector<std::optional<column_index_t>>{},
-      std::vector<std::vector<column_index_t>>{},
-      std::vector<std::vector<VectorPtr>>{},
-      std::vector<TypePtr>{},
-      true,
-      false,
-      false,
-      nullptr,
-      operatorCtx_.get());
+  groupingSet_ = GroupingSet::createForMarkDistinct(
+      std::move(hashers), operatorCtx_.get());
 
   // Set up result
   results_.resize(1);
@@ -93,15 +82,7 @@ void MarkDistinct::addInput(RowVectorPtr input) {
 }
 
 RowVectorPtr MarkDistinct::getOutput() {
-  if (finished_) {
-    input_ = nullptr;
-    return nullptr;
-  }
-
-  if (!input_) {
-    if (noMoreInput_) {
-      finished_ = true;
-    }
+  if (isFinished() || !input_) {
     return nullptr;
   }
 
@@ -131,7 +112,7 @@ RowVectorPtr MarkDistinct::getOutput() {
 }
 
 bool MarkDistinct::isFinished() {
-  return finished_;
+  return noMoreInput_ && !input_;
 }
 
 } // namespace facebook::velox::exec

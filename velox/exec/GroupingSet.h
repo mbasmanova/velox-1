@@ -43,6 +43,13 @@ class GroupingSet {
 
   ~GroupingSet();
 
+  // GroupingSet is also used for MarkDistinctOperator. When being used so,
+  // most aggregation related arguments are empty as they are not needed by
+  // groupingSet for our DISTINCT use case.
+  static std::unique_ptr<GroupingSet> createForMarkDistinct(
+      std::vector<std::unique_ptr<VectorHasher>>&& hashers,
+      OperatorCtx* FOLLY_NONNULL operatorCtx);
+
   void addInput(const RowVectorPtr& input, bool mayPushdown);
 
   void noMoreInput();

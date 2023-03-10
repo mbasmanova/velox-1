@@ -48,7 +48,5 @@ class MarkDistinct : public Operator {
 
  private:
   std::unique_ptr<GroupingSet> groupingSet_;
-
-  bool finished_ = false;
 };
 } // namespace facebook::velox::exec

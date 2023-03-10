@@ -668,8 +668,7 @@ class PlanBuilder {
   /// @param hashKey Channel of precomputed hash of distinctKeys.
   PlanBuilder& markDistinct(
       std::string markerKey,
-      std::vector<std::string> distinctKeys,
-      std::optional<std::string> hashKey);
+      std::vector<std::string> distinctKeys);
 
   /// Stores the latest plan node ID into the specified variable. Useful for
   /// capturing IDs of the leaf plan nodes (table scans, exchanges, etc.) to use
