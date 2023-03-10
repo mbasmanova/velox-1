@@ -577,18 +577,20 @@ RowTypePtr getMarkDistinctOutputType(
 
 MarkDistinctNode::MarkDistinctNode(
     PlanNodeId id,
-    FieldAccessTypedExprPtr markerVariable,
-    std::vector<FieldAccessTypedExprPtr> distinctVariables,
-    std::optional<FieldAccessTypedExprPtr> hashVariable,
+    FieldAccessTypedExprPtr markerKey,
+    std::vector<FieldAccessTypedExprPtr> distinctKeys,
+    std::optional<FieldAccessTypedExprPtr> hashKey,
     PlanNodePtr source)
     : PlanNode(std::move(id)),
-      markerVariable_(std::move(markerVariable)),
-      distinctVariables_(std::move(distinctVariables)),
-      hashVariable_(std::move(hashVariable)),
+      markerKey_(std::move(markerKey)),
+      distinctKeys_(std::move(distinctKeys)),
+      hashKey_(std::move(hashKey)),
       sources_{std::move(source)},
-      outputType_(getMarkDistinctOutputType(
-          sources_[0]->outputType(),
-          markerVariable_)) {}
+      outputType_(
+          getMarkDistinctOutputType(sources_[0]->outputType(), markerKey_)) {
+  VELOX_CHECK_NOT_NULL(markerKey_);
+  VELOX_CHECK_GT(distinctKeys_.size(), 0);
+}
 
 namespace {
 void addSortingKeys(
@@ -698,16 +700,16 @@ void WindowNode::addDetails(std::stringstream& stream) const {
 
 void MarkDistinctNode::addDetails(std::stringstream& stream) const {
   stream << "marker [";
-  stream << markerVariable_->name();
+  stream << markerKey_->name();
   stream << "] ";
 
   stream << "distinct variables [";
-  addFields(stream, distinctVariables_);
+  addFields(stream, distinctKeys_);
   stream << "] ";
 
-  if (hashVariable_) {
+  if (hashKey_) {
     stream << "hash variable [";
-    stream << hashVariable_.value();
+    stream << hashKey_.value();
     stream << "] ";
   }
 }

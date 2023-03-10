@@ -1795,9 +1795,9 @@ class MarkDistinctNode : public PlanNode {
  public:
   MarkDistinctNode(
       PlanNodeId id,
-      FieldAccessTypedExprPtr markerVariable,
-      std::vector<FieldAccessTypedExprPtr> distinctVariables,
-      std::optional<FieldAccessTypedExprPtr> hashVariable,
+      FieldAccessTypedExprPtr markerKey,
+      std::vector<FieldAccessTypedExprPtr> distinctKeys,
+      std::optional<FieldAccessTypedExprPtr> hashKey,
       PlanNodePtr source);
 
   const std::vector<PlanNodePtr>& sources() const override {
@@ -1813,25 +1813,21 @@ class MarkDistinctNode : public PlanNode {
     return "MarkDistinct";
   }
 
-  const FieldAccessTypedExprPtr& markerVariable() const {
-    return markerVariable_;
+  const FieldAccessTypedExprPtr& markerKey() const {
+    return markerKey_;
   }
 
-  const std::vector<FieldAccessTypedExprPtr>& distinctVariables() const {
-    return distinctVariables_;
-  }
-
-  const std::optional<FieldAccessTypedExprPtr>& hashVariable() const {
-    return hashVariable_;
+  const std::vector<FieldAccessTypedExprPtr>& distinctKeys() const {
+    return distinctKeys_;
   }
 
  private:
   void addDetails(std::stringstream& stream) const override;
-  const FieldAccessTypedExprPtr markerVariable_;
+  const FieldAccessTypedExprPtr markerKey_;
 
-  const std::vector<FieldAccessTypedExprPtr> distinctVariables_;
+  const std::vector<FieldAccessTypedExprPtr> distinctKeys_;
 
-  const std::optional<FieldAccessTypedExprPtr> hashVariable_;
+  const std::optional<FieldAccessTypedExprPtr> hashKey_;
 
   const std::vector<PlanNodePtr> sources_;
 

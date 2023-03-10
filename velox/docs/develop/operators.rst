@@ -551,9 +551,9 @@ and distinct aggregate column values.
 
   * - Property
     - Description
-  * - markerVariable
+  * - markerKey
     - Name of the output mask channel.
-  * - distinctVariables
+  * - distinctKeys
     - Names of grouping keys and distinct aggregate column.
   * - hashVariable
     - Optional. Name of channel that contains pre-computed hash of grouping keys and distinct aggregate column.

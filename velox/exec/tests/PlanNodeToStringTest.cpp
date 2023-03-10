@@ -628,16 +628,10 @@ TEST_F(PlanNodeToStringTest, window) {
 }
 
 TEST_F(PlanNodeToStringTest, markDistinct) {
-  auto field1 =
-      std::make_shared<const core::FieldAccessTypedExpr>(BOOLEAN(), "c0");
-
-  auto markerVariable = std::make_shared<const core::FieldAccessTypedExpr>(
-      BOOLEAN(), "c0$Distinct");
-
   auto op =
       PlanBuilder()
           .tableScan(ROW({"a", "b", "c"}, {VARCHAR(), BIGINT(), BIGINT()}))
-          .markDistinct(markerVariable, {field1}, std::nullopt)
+          .markDistinct("c0$Distinct", {"c0"}, std::nullopt)
           .planNode();
   ASSERT_EQ("-- MarkDistinct\n", op->toString());
   ASSERT_EQ(

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "MarkDistinct.h"
+#include "velox/exec/MarkDistinct.h"
 #include "velox/common/base/Range.h"
 #include "velox/vector/FlatVector.h"
 
@@ -33,7 +33,7 @@ MarkDistinct::MarkDistinct(
           operatorId,
           planNode->id(),
           "MarkDistinct") {
-  auto inputType = planNode->sources()[0]->outputType();
+  const auto inputType = planNode->sources()[0]->outputType();
 
   // Set all input columns as identity projection.
   for (auto i = 0; i < inputType->size(); ++i) {
@@ -44,13 +44,21 @@ MarkDistinct::MarkDistinct(
   resultProjections_.emplace_back(0, inputType->size());
 
   // Initialize groupingset
-  auto numHashers = planNode.get()->distinctVariables().size();
+  auto numHashers = planNode->distinctKeys().size();
   std::vector<std::unique_ptr<VectorHasher>> hashers;
   hashers.reserve(numHashers);
 
-  for (const auto& distinctVariable : planNode.get()->distinctVariables()) {
+  for (const auto& distinctVariable : planNode.get()->distinctKeys()) {
     auto channel = exprToChannel(distinctVariable.get(), inputType);
-    hashers.push_back(VectorHasher::create(distinctVariable->type(), channel));
+    if (channel == kConstantChannel) {
+      // A constant expr, e.g select sum (distinct 0). Treat as no op because it
+      // does not affect distinctness and we do not output hash value.
+      VELOX_CHECK_NOT_NULL(
+          dynamic_cast<const core::ConstantTypedExpr*>(distinctVariable.get()));
+    } else {
+      hashers.push_back(
+          VectorHasher::create(distinctVariable->type(), channel));
+    }
   }
 
   // We hijack groupingSet to do most of the heavy lifting for us for distinct.
@@ -79,11 +87,9 @@ MarkDistinct::MarkDistinct(
 }
 
 void MarkDistinct::addInput(RowVectorPtr input) {
-  // Add input to groupingset
-  groupingSet_->addInput(input, false);
+  groupingSet_->addInput(input, false /*mayPushdown*/);
 
-  // Save input
-  input_ = input;
+  input_ = std::move(input);
 }
 
 RowVectorPtr MarkDistinct::getOutput() {

@@ -55,12 +55,6 @@ class MarkDistinctTest : public OperatorTestBase {
 
     vectors.push_back(makeRowVector({baseEncoded}));
 
-    auto field1 = std::make_shared<const core::FieldAccessTypedExpr>(
-        exprTypeFunctor(), "c0");
-
-    auto markerVariable = std::make_shared<const core::FieldAccessTypedExpr>(
-        BOOLEAN(), "c0$Distinct");
-
     auto distinctCol = makeFlatVector<bool>(
         size, [&](vector_size_t row) { return row < baseSize; }, nullptr);
 
@@ -68,7 +62,7 @@ class MarkDistinctTest : public OperatorTestBase {
 
     auto op = PlanBuilder()
                   .values(vectors)
-                  .markDistinct(markerVariable, {field1}, std::nullopt)
+                  .markDistinct("c0$Distinct", {"c0"}, std::nullopt)
                   .planNode();
 
     CursorParameters params;
@@ -156,33 +150,13 @@ TEST_F(MarkDistinctTest, distinctAggregationTest) {
        makeFlatVector<int32_t>({2, 3}),
        makeFlatVector<int32_t>({1, 2})}));
 
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
-      distinctVariablesC1;
-  distinctVariablesC1.push_back(
-      std::make_shared<const core::FieldAccessTypedExpr>(INTEGER(), "c0"));
-  distinctVariablesC1.push_back(
-      std::make_shared<const core::FieldAccessTypedExpr>(INTEGER(), "c1"));
-
-  std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
-      distinctVariablesC2;
-  distinctVariablesC2.push_back(
-      std::make_shared<const core::FieldAccessTypedExpr>(INTEGER(), "c0"));
-  distinctVariablesC2.push_back(
-      std::make_shared<const core::FieldAccessTypedExpr>(INTEGER(), "c2"));
-
-  auto markerVariableC1 = std::make_shared<const core::FieldAccessTypedExpr>(
-      BOOLEAN(), "c1$Distinct");
-  auto markerVariableC2 = std::make_shared<const core::FieldAccessTypedExpr>(
-      BOOLEAN(), "c2$Distinct");
   auto op =
       PlanBuilder()
           .values(vectors)
-          .markDistinct(markerVariableC1, distinctVariablesC1, std::nullopt)
-          .markDistinct(markerVariableC2, distinctVariablesC2, std::nullopt)
+          .markDistinct("c1$Distinct", {"c0", "c1"}, std::nullopt)
+          .markDistinct("c2$Distinct", {"c0", "c2"}, std::nullopt)
           .singleAggregation(
-              {"c0"},
-              {"sum(c1)", "sum(c2)"},
-              {markerVariableC1->name(), markerVariableC2->name()})
+              {"c0"}, {"sum(c1)", "sum(c2)"}, {"c1$Distinct", "c2$Distinct"})
           .orderBy({"c0"}, false)
           .planNode();
 

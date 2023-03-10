@@ -1312,16 +1312,15 @@ PlanBuilder& PlanBuilder::window(
 }
 
 PlanBuilder& PlanBuilder::markDistinct(
-    std::shared_ptr<const core::FieldAccessTypedExpr> markerVariable,
-    std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
-        distinctVariables,
-    std::optional<std::shared_ptr<const core::FieldAccessTypedExpr>>
-        hashVariable) {
+    std::string markerKey,
+    std::vector<std::string> distinctKeys,
+    std::optional<std::string> hashKey) {
   planNode_ = std::make_shared<core::MarkDistinctNode>(
       nextPlanNodeId(),
-      markerVariable,
-      distinctVariables,
-      hashVariable,
+      std::make_shared<core::FieldAccessTypedExpr>(BOOLEAN(), markerKey),
+      fields(planNode_->outputType(), distinctKeys),
+      hashKey ? std::optional(field(planNode_->outputType(), hashKey.value()))
+              : std::nullopt,
       planNode_);
   return *this;
 }

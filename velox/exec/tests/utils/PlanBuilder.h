@@ -663,15 +663,13 @@ class PlanBuilder {
   PlanBuilder& window(const std::vector<std::string>& windowFunctions);
 
   /// Add a MarkDistinct operator to compute aggregate mask channel
-  /// @param markerVariable Name of output mask channel
-  /// @param distinctVariables List of columns to be marked distinct.
-  /// @param hashVariable Channel of precomputed hash of distinctVariables.
+  /// @param markerKey Name of output mask channel
+  /// @param distinctKeys List of columns to be marked distinct.
+  /// @param hashKey Channel of precomputed hash of distinctKeys.
   PlanBuilder& markDistinct(
-      std::shared_ptr<const core::FieldAccessTypedExpr> markerVariable,
-      std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>
-          distinctVariables,
-      std::optional<std::shared_ptr<const core::FieldAccessTypedExpr>>
-          hashVariable);
+      std::string markerKey,
+      std::vector<std::string> distinctKeys,
+      std::optional<std::string> hashKey);
 
   /// Stores the latest plan node ID into the specified variable. Useful for
   /// capturing IDs of the leaf plan nodes (table scans, exchanges, etc.) to use
