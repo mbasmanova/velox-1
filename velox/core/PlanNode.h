@@ -1782,20 +1782,16 @@ class WindowNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
-/// The MarkDistinct operator is used to produce aggregate mask channels for
-/// distinct aggregations. The mask channel is a boolean vector set to true for
-/// input all rows that contain new unique combination of grouping keys and
-/// distinct aggregate column values.
-/// @param markerVariable Name of the output mask channel.
-/// @param distinctVariables Names of grouping keys and distinct aggregate
+/// The MarkDistinct operator marks unique rows based on distinctKeys.
+/// The result is put in a new markerName channel alongside the original input.
+/// @param markerName Name of the output mask channel.
+/// @param distinctKeys Names of grouping keys.
 /// column.
-/// @param hashVariable Optional. Name of channel that contains pre-computed
-/// hash of grouping keys and distinct aggregate column.
 class MarkDistinctNode : public PlanNode {
  public:
   MarkDistinctNode(
       PlanNodeId id,
-      FieldAccessTypedExprPtr markerKey,
+      std::string markerName,
       std::vector<FieldAccessTypedExprPtr> distinctKeys,
       PlanNodePtr source);
 
@@ -1812,8 +1808,8 @@ class MarkDistinctNode : public PlanNode {
     return "MarkDistinct";
   }
 
-  const FieldAccessTypedExprPtr& markerKey() const {
-    return markerKey_;
+  const std::string& markerName() const {
+    return markerName_;
   }
 
   const std::vector<FieldAccessTypedExprPtr>& distinctKeys() const {
@@ -1822,7 +1818,7 @@ class MarkDistinctNode : public PlanNode {
 
  private:
   void addDetails(std::stringstream& stream) const override;
-  const FieldAccessTypedExprPtr markerKey_;
+  const std::string markerName_;
 
   const std::vector<FieldAccessTypedExprPtr> distinctKeys_;
 

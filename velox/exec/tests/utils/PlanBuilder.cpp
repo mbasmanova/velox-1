@@ -1316,7 +1316,7 @@ PlanBuilder& PlanBuilder::markDistinct(
     std::vector<std::string> distinctKeys) {
   planNode_ = std::make_shared<core::MarkDistinctNode>(
       nextPlanNodeId(),
-      std::make_shared<core::FieldAccessTypedExpr>(BOOLEAN(), markerKey),
+      std::move(markerKey),
       fields(planNode_->outputType(), distinctKeys),
       planNode_);
   return *this;

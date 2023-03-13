@@ -50,15 +50,8 @@ MarkDistinct::MarkDistinct(
 
   for (const auto& distinctVariable : planNode.get()->distinctKeys()) {
     auto channel = exprToChannel(distinctVariable.get(), inputType);
-    if (channel == kConstantChannel) {
-      // A constant expr, e.g select sum (distinct 0). Treat as no op because it
-      // does not affect distinctness and we do not output hash value.
-      VELOX_CHECK_NOT_NULL(
-          dynamic_cast<const core::ConstantTypedExpr*>(distinctVariable.get()));
-    } else {
-      hashers.push_back(
-          VectorHasher::create(distinctVariable->type(), channel));
-    }
+    VELOX_CHECK_NE(channel, kConstantChannel);
+    hashers.push_back(VectorHasher::create(distinctVariable->type(), channel));
   }
 
   // We hijack groupingSet to do most of the heavy lifting for us for distinct.

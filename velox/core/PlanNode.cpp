@@ -565,28 +565,28 @@ WindowNode::WindowNode(
 namespace {
 RowTypePtr getMarkDistinctOutputType(
     const RowTypePtr& inputType,
-    const FieldAccessTypedExprPtr& markerVariable) {
+    const std::string& markerVariable) {
   std::vector<std::string> names = inputType->names();
   std::vector<TypePtr> types = inputType->children();
 
-  names.emplace_back(markerVariable->name());
-  types.emplace_back(markerVariable->type());
+  names.emplace_back(markerVariable);
+  types.emplace_back(BOOLEAN());
   return ROW(std::move(names), std::move(types));
 }
 } // namespace
 
 MarkDistinctNode::MarkDistinctNode(
     PlanNodeId id,
-    FieldAccessTypedExprPtr markerKey,
+    std::string markerName,
     std::vector<FieldAccessTypedExprPtr> distinctKeys,
     PlanNodePtr source)
     : PlanNode(std::move(id)),
-      markerKey_(std::move(markerKey)),
+      markerName_(std::move(markerName)),
       distinctKeys_(std::move(distinctKeys)),
       sources_{std::move(source)},
       outputType_(
-          getMarkDistinctOutputType(sources_[0]->outputType(), markerKey_)) {
-  VELOX_CHECK_NOT_NULL(markerKey_);
+          getMarkDistinctOutputType(sources_[0]->outputType(), markerName_)) {
+  VELOX_CHECK_GT(markerName_.size(), 0)
   VELOX_CHECK_GT(distinctKeys_.size(), 0);
 }
 
@@ -698,10 +698,10 @@ void WindowNode::addDetails(std::stringstream& stream) const {
 
 void MarkDistinctNode::addDetails(std::stringstream& stream) const {
   stream << "marker [";
-  stream << markerKey_->name();
+  stream << markerName_;
   stream << "] ";
 
-  stream << "distinct variables [";
+  stream << "distinct keys [";
   addFields(stream, distinctKeys_);
   stream << "] ";
 }

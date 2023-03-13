@@ -551,7 +551,7 @@ and distinct aggregate column values.
 
   * - Property
     - Description
-  * - markerKey
+  * - markerName
     - Name of the output mask channel.
   * - distinctKeys
     - Names of grouping keys and distinct aggregate column.
