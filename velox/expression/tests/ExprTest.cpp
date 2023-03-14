@@ -28,6 +28,8 @@
 #include "velox/expression/ConstantExpr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
+
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
@@ -3155,6 +3157,45 @@ TEST_F(ExprTest, mapKeysAndValues) {
   rows.updateBounds();
   std::vector<VectorPtr> result(2);
   ASSERT_NO_THROW(exprSet->eval(rows, context, result));
+}
+
+TEST_F(ExprTest, maskErrorByNull) {
+  // Checks that errors in arguments of null-propagating functions are ignored
+  // for rows with at least one null.
+  auto data = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2, 3, 4, 5, 6}),
+       makeFlatVector<int32_t>({1, 0, 3, 0, 5, 6}),
+       makeNullableFlatVector<int32_t>(
+           {std::nullopt, 10, std::nullopt, 10, std::nullopt, 10})});
+
+  auto resultAB =
+      evaluate("if (c2 is null, 10, CAST(null as BIGINT))  + (c0 / c1)", data);
+  auto resultBA =
+      evaluate("(c0 / c1) + if (c2 is null, 10, CAST(null as BIGINT))", data);
+
+  assertEqualVectors(resultAB, resultBA);
+  functions::test::FunctionBaseTest::assertUserError(
+      [&]() { evaluate("(c0 / c1) + 10", data); }, "division by zero");
+  functions::test::FunctionBaseTest::assertUserError(
+      [&]() {
+        evaluate(
+            "(c0 / c1) + (c0 + if(c1 = 0, 10, CAST(null as BIGINT)))", data);
+      },
+      "division by zero");
+
+  // Make non null flat input to invoke flat no null path for a subtree.
+  data = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2, 3, 4, 5, 6}),
+       makeFlatVector<int32_t>({1, 0, 3, 0, 5, 6})});
+  // Register a function that does not support flat no nulls fast path.
+  exec::registerVectorFunction(
+      "plus5",
+      PlusConstantFunction::signatures(),
+      std::make_unique<PlusConstantFunction>(5));
+
+  auto result = evaluate("plus5(c0 + c1)", data);
+  assertEqualVectors(
+      result, makeNullableFlatVector<int32_t>({7, 7, 11, 9, 15, 17}));
 }
 
 /// Test recursive constant peeling: in general expression evaluation first,

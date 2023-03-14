@@ -322,7 +322,10 @@ ExprPtr tryFoldIfConstant(const ExprPtr& expr, Scope* scope) {
     // If not, in case this expression is never hit at execution time (for
     // instance, if other arguments are all null in a function with default null
     // behavior), the query won't fail.
-    catch (const VeloxUserError&) {
+    catch (const std::exception&) {
+      // Clear left-behind values. Simplified path will error out if
+      // not cleared.
+      expr->inputValues().clear();
     }
   }
   return expr;
