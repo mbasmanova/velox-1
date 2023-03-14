@@ -861,6 +861,18 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
     }
 
     setDictionaryWrapping(*decoded, rowsToDecode, *firstWrapper, context);
+
+    // 'newRows' comes from the set of row numbers in the base vector. These
+    // numbers may be larger than rows.end(). Hence, we need to resize constant
+    // inputs.
+    if (newRows->end() > rows.end() && !constantFields.empty()) {
+      for (int i = 0; i < constantFields.size(); ++i) {
+        if (!constantFields.empty() && constantFields[i]) {
+          peeledVectors[i] =
+              BaseVector::wrapInConstant(newRows->end(), 0, peeledVectors[i]);
+        }
+      }
+    }
   }
   int numPeeled = 0;
   for (int i = 0; i < peeledVectors.size(); ++i) {
