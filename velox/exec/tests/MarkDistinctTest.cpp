@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/exec/tests/utils/QueryAssertions.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -24,54 +24,28 @@ using namespace facebook::velox::exec::test;
 
 class MarkDistinctTest : public OperatorTestBase {
  public:
-  template <class NativeType>
-  std::function<VectorPtr()> baseFunctorTemplate() {
-    return [&]() {
-      return makeFlatVector<NativeType>(
-          2, [&](vector_size_t row) { return (NativeType)(row % 2); }, nullptr);
-    };
-  }
-
-  template <class NativeType>
-  void markDistinctTest(
-      std::function<VectorPtr()> baseFunctor,
-      std::function<TypePtr()> exprTypeFunctor = []() {
-        using implType = typename CppToType<NativeType>::ImplType;
-        return std::make_shared<implType>();
-      }) {
+  void markDistinctTest(const VectorPtr& base) {
     std::vector<RowVectorPtr> vectors;
-
-    VectorPtr base = baseFunctor();
 
     const vector_size_t baseSize = base->size();
     const vector_size_t size = baseSize * 2;
-    auto indices = AlignedBuffer::allocate<vector_size_t>(size, pool());
-    auto rawIndices = indices->asMutable<vector_size_t>();
-    for (auto i = 0; i < size; ++i) {
-      rawIndices[i] = i % (baseSize);
-    }
-    auto baseEncoded =
-        BaseVector::wrapInDictionary(nullptr, indices, size, base);
+    auto indices = makeIndices(size, [&](auto row) { return row % baseSize; });
+    auto baseEncoded = wrapInDictionary(indices, size, base);
 
     vectors.push_back(makeRowVector({baseEncoded}));
 
-    auto distinctCol = makeFlatVector<bool>(
-        size, [&](vector_size_t row) { return row < baseSize; }, nullptr);
+    auto distinctCol =
+        makeFlatVector<bool>(size, [&](auto row) { return row < baseSize; });
 
-    RowVectorPtr expectedResults = makeRowVector({baseEncoded, distinctCol});
+    auto expectedResults = makeRowVector({baseEncoded, distinctCol});
 
     auto op = PlanBuilder()
                   .values(vectors)
                   .markDistinct("c0$Distinct", {"c0"})
                   .planNode();
 
-    CursorParameters params;
-    params.planNode = op;
-
-    auto result = readCursor(params, [](auto) {});
-    auto res = result.second[0]->childAt(1);
-
-    assertEqualVectors(distinctCol, res);
+    auto results = AssertQueryBuilder(op).copyResults(pool());
+    assertEqualVectors(results, expectedResults);
   }
 };
 
@@ -83,51 +57,46 @@ using MyTypes =
 TYPED_TEST_SUITE(MarkDistinctPODTest, MyTypes);
 
 TYPED_TEST(MarkDistinctPODTest, basic) {
-  using cppColType = TypeParam;
-  this->template markDistinctTest<cppColType>(
-      this->template baseFunctorTemplate<cppColType>());
+  auto data = VectorTestBase::makeFlatVector<TypeParam>(
+      2, [&](auto row) { return row % 2; });
+
+  MarkDistinctTest::markDistinctTest(data);
 }
 
-TEST_F(MarkDistinctTest, basicArrayTest) {
-  using cppColType = Array<int64_t>;
+TEST_F(MarkDistinctTest, array) {
   auto base = makeArrayVector<int64_t>({
       {1, 2, 3, 4, 5},
       {1, 2, 3},
   });
-  markDistinctTest<cppColType>(
-      [&]() { return base; }, []() { return CppToType<cppColType>::create(); });
+  markDistinctTest(base);
 }
 
-TEST_F(MarkDistinctTest, basicMapTest) {
-  using cppColType = Map<int8_t, int32_t>;
+TEST_F(MarkDistinctTest, map) {
   auto base = makeMapVector<int8_t, int32_t>(
       {{{1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 1}}, {{1, 1}, {1, 1}, {1, 1}}});
-  markDistinctTest<cppColType>(
-      [&]() { return base; }, []() { return CppToType<cppColType>::create(); });
+  markDistinctTest(base);
 }
 
-TEST_F(MarkDistinctTest, basicVarcharTest) {
-  using cppColType = StringView;
+TEST_F(MarkDistinctTest, varchar) {
   auto base = makeFlatVector<StringView>({
       "{1, 2, 3, 4, 5}",
       "{1, 2, 3}",
   });
-  markDistinctTest<cppColType>(
-      [&]() { return base; }, []() { return CppToType<cppColType>::create(); });
+  markDistinctTest(base);
 }
 
-TEST_F(MarkDistinctTest, basicRowTest) {
-  using cppColType = Row<Array<int64_t>, Map<int8_t, int32_t>>;
-  auto base = makeRowVector(
-      {makeArrayVector<int64_t>({
-           {1, 2, 3, 4, 5},
-           {1, 2, 3},
-       }),
-       makeMapVector<int8_t, int32_t>(
-           {{{1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 1}},
-            {{1, 1}, {1, 1}, {1, 1}}})});
-  markDistinctTest<cppColType>(
-      [&]() { return base; }, []() { return CppToType<cppColType>::create(); });
+TEST_F(MarkDistinctTest, row) {
+  auto base = makeRowVector({
+      makeArrayVector<int64_t>({
+          {1, 2, 3, 4, 5},
+          {1, 2, 3},
+      }),
+      makeMapVector<int8_t, int32_t>({
+          {{1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 1}},
+          {{1, 1}, {1, 1}, {1, 1}},
+      }),
+  });
+  markDistinctTest(base);
 }
 
 // This test verifies this query:
@@ -160,15 +129,11 @@ TEST_F(MarkDistinctTest, distinctAggregationTest) {
           .orderBy({"c0"}, false)
           .planNode();
 
-  CursorParameters params;
-  params.planNode = op;
-
-  auto result = readCursor(params, [](auto) {});
-  auto actual = result.second;
-
-  RowVectorPtr expected = makeRowVector(
+  auto expected = makeRowVector(
       {makeFlatVector<int32_t>({1, 2}),
        makeFlatVector<int64_t>({1, 6}),
        makeFlatVector<int64_t>({3, 3})});
-  assertEqualVectors(expected, actual[0]);
+
+  auto results = AssertQueryBuilder(op).copyResults(pool());
+  assertEqualVectors(results, expected);
 }
