@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/core/PlanNode.h"
+#include "velox/common/encode/Base64.h"
+#include "velox/vector/VectorSaver.h"
 
 namespace facebook::velox::core {
 
@@ -152,6 +154,33 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
   }
 }
 
+// static
+const char* AggregationNode::stepName(AggregationNode::Step step) {
+  switch (step) {
+    case Step::kPartial:
+      return "PARTIAL";
+    case Step::kFinal:
+      return "FINAL";
+    case Step::kIntermediate:
+      return "INTERMEDIATE";
+    case Step::kSingle:
+      return "SINGLE";
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
+// static
+AggregationNode::Step AggregationNode::stepFromName(const std::string& name) {
+  static const std::unordered_map<std::string, AggregationNode::Step> kSteps = {
+      {"PARTIAL", Step::kPartial},
+      {"FINAL", Step::kFinal},
+      {"INTERMEDIATE", Step::kIntermediate},
+      {"SINGLE", Step::kSingle}};
+
+  return kSteps.at(name);
+}
+
 namespace {
 RowTypePtr getGroupIdOutputType(
     const std::vector<GroupIdNode::GroupingKeyInfo>& groupingKeyInfos,
@@ -229,6 +258,13 @@ void ValuesNode::addDetails(std::stringstream& stream) const {
     totalCount += vector->size();
   }
   stream << totalCount << " rows in " << values_.size() << " vectors";
+  if (parallelizable_) {
+    stream << ", parallelizable";
+  }
+
+  if (repeatTimes_) {
+    stream << ", repeatTimes=" << repeatTimes_;
+  }
 }
 
 void ProjectNode::addDetails(std::stringstream& stream) const {
@@ -420,6 +456,22 @@ void AbstractJoinNode::addDetails(std::stringstream& stream) const {
   if (filter_) {
     stream << ", filter: " << filter_->toString();
   }
+}
+
+JoinType joinTypeFromName(const std::string& name) {
+  static const std::unordered_map<std::string, JoinType> kJoinTypes = {
+      {"INNER", JoinType::kInner},
+      {"LEFT", JoinType::kLeft},
+      {"RIGHT", JoinType::kRight},
+      {"FULL", JoinType::kFull},
+      {"LEFT SEMI (FILTER)", JoinType::kLeftSemiFilter},
+      {"RIGHT SEMI (FILTER)", JoinType::kRightSemiFilter},
+      {"LEFT SEMI (PROJECT)", JoinType::kLeftSemiProject},
+      {"RIGHT SEMI (PROJECT)", JoinType::kRightSemiProject},
+      {"ANTI", JoinType::kAnti},
+  };
+
+  return kJoinTypes.at(name);
 }
 
 void HashJoinNode::addDetails(std::stringstream& stream) const {
@@ -723,6 +775,263 @@ std::unordered_set<core::PlanNodeId> PlanNode::leafPlanNodeIds() const {
   std::unordered_set<core::PlanNodeId> leafIds;
   collectLeafPlanNodeIds(*this, leafIds);
   return leafIds;
+}
+
+// static
+void PlanNode::registerSerDe() {
+  auto& registry = DeserializationRegistryForSharedPtr();
+
+  registry.Register("AggregationNode", core::AggregationNode::create);
+  registry.Register("AssignUniqueIdNode", core::AssignUniqueIdNode::create);
+  registry.Register("FilterNode", core::FilterNode::create);
+  registry.Register("HashJoinNode", core::HashJoinNode::create);
+  registry.Register("ProjectNode", core::ProjectNode::create);
+  registry.Register("ValuesNode", core::ValuesNode::create);
+}
+
+namespace {
+std::vector<PlanNodePtr> deserializeSources(
+    const folly::dynamic& obj,
+    void* context) {
+  if (obj.count("sources")) {
+    return ISerializable::deserialize<std::vector<PlanNode>>(
+        obj["sources"], context);
+  }
+
+  return {};
+}
+
+PlanNodePtr deserializeSingleSource(const folly::dynamic& obj, void* context) {
+  auto sources = deserializeSources(obj, context);
+  VELOX_CHECK_EQ(1, sources.size());
+
+  return sources[0];
+}
+
+PlanNodeId deserializePlanNodeId(const folly::dynamic& obj) {
+  return obj["id"].asString();
+}
+} // namespace
+
+folly::dynamic PlanNode::serialize() const {
+  folly::dynamic obj = folly::dynamic::object;
+  obj["name"] = fmt::format("{}Node", name());
+  obj["id"] = id_;
+
+  if (!sources().empty()) {
+    folly::dynamic serializedSources = folly::dynamic::array;
+    for (const auto& source : sources()) {
+      serializedSources.push_back(source->serialize());
+    }
+
+    obj["sources"] = serializedSources;
+  }
+
+  return obj;
+}
+
+folly::dynamic ValuesNode::serialize() const {
+  auto obj = PlanNode::serialize();
+
+  // Serialize data using VectorSaver.
+  std::ostringstream out;
+  for (const auto& vector : values_) {
+    saveVector(*vector, out);
+  }
+
+  auto serializedData = out.str();
+
+  obj["data"] =
+      encoding::Base64::encode(serializedData.data(), serializedData.size());
+  obj["parallelizable"] = parallelizable_;
+  obj["repeatTimes"] = repeatTimes_;
+  return obj;
+}
+
+// static
+PlanNodePtr ValuesNode::create(const folly::dynamic& obj, void* context) {
+  auto sources = deserializeSources(obj, context);
+  VELOX_CHECK_EQ(0, sources.size());
+
+  auto encodedData = obj["data"].asString();
+  auto serializedData = encoding::Base64::decode(encodedData);
+  std::istringstream dataStream(serializedData);
+
+  auto* pool = static_cast<memory::MemoryPool*>(context);
+
+  std::vector<RowVectorPtr> values;
+  while (dataStream.tellg() < serializedData.size()) {
+    values.push_back(
+        std::dynamic_pointer_cast<RowVector>(restoreVector(dataStream, pool)));
+  }
+
+  return std::make_shared<ValuesNode>(
+      deserializePlanNodeId(obj),
+      std::move(values),
+      obj["parallelizable"].asBool(),
+      obj["repeatTimes"].asInt());
+}
+
+folly::dynamic AssignUniqueIdNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["idName"] = outputType_->names().back();
+  obj["taskUniqueId"] = taskUniqueId_;
+  return obj;
+}
+
+// static
+PlanNodePtr AssignUniqueIdNode::create(
+    const folly::dynamic& obj,
+    void* context) {
+  auto source = deserializeSingleSource(obj, context);
+
+  return std::make_shared<AssignUniqueIdNode>(
+      deserializePlanNodeId(obj),
+      obj["idName"].asString(),
+      obj["taskUniqueId"].asInt(),
+      std::move(source));
+}
+
+folly::dynamic FilterNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["filter"] = filter_->serialize();
+  return obj;
+}
+
+// static
+PlanNodePtr FilterNode::create(const folly::dynamic& obj, void* context) {
+  auto source = deserializeSingleSource(obj, context);
+
+  auto filter = ISerializable::deserialize<ITypedExpr>(obj["filter"]);
+  return std::make_shared<FilterNode>(
+      deserializePlanNodeId(obj), filter, std::move(source));
+}
+
+folly::dynamic ProjectNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["names"] = ISerializable::serialize(names_);
+  obj["projections"] = ISerializable::serialize(projections_);
+  return obj;
+}
+
+// static
+PlanNodePtr ProjectNode::create(const folly::dynamic& obj, void* context) {
+  auto source = deserializeSingleSource(obj, context);
+
+  auto names = ISerializable::deserialize<std::vector<std::string>>(
+      obj["names"], context);
+  auto projections = ISerializable::deserialize<std::vector<ITypedExpr>>(
+      obj["projections"], context);
+  return std::make_shared<ProjectNode>(
+      deserializePlanNodeId(obj),
+      std::move(names),
+      std::move(projections),
+      std::move(source));
+}
+
+folly::dynamic AggregationNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["step"] = stepName(step_);
+  obj["groupingKeys"] = ISerializable::serialize(groupingKeys_);
+  obj["preGroupedKeys"] = ISerializable::serialize(preGroupedKeys_);
+  obj["aggregateNames"] = ISerializable::serialize(aggregateNames_);
+  obj["aggregates"] = ISerializable::serialize(aggregates_);
+
+  obj["masks"] = folly::dynamic::array;
+  for (const auto& mask : aggregateMasks_) {
+    if (mask) {
+      obj["masks"].push_back(mask->serialize());
+    } else {
+      obj["masks"].push_back(nullptr);
+    }
+  }
+
+  obj["ignoreNullKeys"] = ignoreNullKeys_;
+  return obj;
+}
+
+// static
+PlanNodePtr AggregationNode::create(const folly::dynamic& obj, void* context) {
+  auto source = deserializeSingleSource(obj, context);
+
+  auto groupingKeys =
+      ISerializable::deserialize<std::vector<FieldAccessTypedExpr>>(
+          obj["groupingKeys"], context);
+
+  auto preGroupedKeys =
+      ISerializable::deserialize<std::vector<FieldAccessTypedExpr>>(
+          obj["preGroupedKeys"], context);
+
+  auto aggregateNames = ISerializable::deserialize<std::vector<std::string>>(
+      obj["aggregateNames"], context);
+
+  auto aggregates = ISerializable::deserialize<std::vector<CallTypedExpr>>(
+      obj["aggregates"], context);
+
+  std::vector<FieldAccessTypedExprPtr> masks;
+  for (const auto& mask : obj["masks"]) {
+    if (mask.isNull()) {
+      masks.push_back(nullptr);
+    } else {
+      masks.push_back(
+          ISerializable::deserialize<FieldAccessTypedExpr>(mask, context));
+    }
+  }
+
+  return std::make_shared<AggregationNode>(
+      deserializePlanNodeId(obj),
+      stepFromName(obj["step"].asString()),
+      groupingKeys,
+      preGroupedKeys,
+      aggregateNames,
+      aggregates,
+      masks,
+      obj["ignoreNullKeys"].asBool(),
+      deserializeSingleSource(obj, context));
+}
+
+folly::dynamic HashJoinNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["nullAware"] = nullAware_;
+  obj["joinType"] = joinTypeName(joinType_);
+  obj["leftKeys"] = ISerializable::serialize(leftKeys_);
+  obj["rightKeys"] = ISerializable::serialize(rightKeys_);
+  if (filter_) {
+    obj["filter"] = filter_->serialize();
+  }
+  obj["outputType"] = outputType_->serialize();
+  return obj;
+}
+
+// static
+PlanNodePtr HashJoinNode::create(const folly::dynamic& obj, void* context) {
+  auto sources = deserializeSources(obj, context);
+  VELOX_CHECK_EQ(2, sources.size());
+
+  auto nullAware = obj["nullAware"].asBool();
+  auto leftKeys = ISerializable::deserialize<std::vector<FieldAccessTypedExpr>>(
+      obj["leftKeys"], context);
+  auto rightKeys =
+      ISerializable::deserialize<std::vector<FieldAccessTypedExpr>>(
+          obj["rightKeys"], context);
+
+  TypedExprPtr filter;
+  if (obj.count("filter")) {
+    filter = ISerializable::deserialize<ITypedExpr>(obj["filter"]);
+  }
+
+  auto outputType = ISerializable::deserialize<RowType>(obj["outputType"]);
+
+  return std::make_shared<HashJoinNode>(
+      deserializePlanNodeId(obj),
+      joinTypeFromName(obj["joinType"].asString()),
+      nullAware,
+      std::move(leftKeys),
+      std::move(rightKeys),
+      filter,
+      sources[0],
+      sources[1],
+      outputType);
 }
 
 } // namespace facebook::velox::core

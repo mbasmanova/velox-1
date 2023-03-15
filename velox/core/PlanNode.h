@@ -86,7 +86,7 @@ extern const SortOrder kAscNullsLast;
 extern const SortOrder kDescNullsFirst;
 extern const SortOrder kDescNullsLast;
 
-class PlanNode {
+class PlanNode : public ISerializable {
  public:
   explicit PlanNode(const PlanNodeId& id) : id_{id} {}
 
@@ -95,6 +95,10 @@ class PlanNode {
   const PlanNodeId& id() const {
     return id_;
   }
+
+  folly::dynamic serialize() const;
+
+  static void registerSerDe();
 
   virtual const RowTypePtr& outputType() const = 0;
 
@@ -239,6 +243,10 @@ class ValuesNode : public PlanNode {
     return "Values";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -274,6 +282,10 @@ class ArrowStreamNode : public PlanNode {
     return "ArrowStream";
   }
 
+  folly::dynamic serialize() const override {
+    VELOX_UNSUPPORTED("ArrowStream plan node is not serializable");
+  }
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -306,6 +318,10 @@ class FilterNode : public PlanNode {
   std::string_view name() const override {
     return "Filter";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override {
@@ -361,6 +377,10 @@ class ProjectNode : public PlanNode {
   virtual std::string_view name() const override {
     return "Project";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -510,19 +530,9 @@ class AggregationNode : public PlanNode {
     kSingle
   };
 
-  static const char* stepName(Step step) {
-    switch (step) {
-      case Step::kPartial:
-        return "PARTIAL";
-      case Step::kFinal:
-        return "FINAL";
-      case Step::kIntermediate:
-        return "INTERMEDIATE";
-      case Step::kSingle:
-        return "SINGLE";
-    }
-    VELOX_UNREACHABLE();
-  }
+  static const char* stepName(Step step);
+
+  static Step stepFromName(const std::string& name);
 
   /**
    * @param preGroupedKeys A subset of the 'groupingKeys' on which the input is
@@ -600,6 +610,10 @@ class AggregationNode : public PlanNode {
   bool isSingle() const {
     return step_ == Step::kSingle;
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1113,6 +1127,8 @@ inline const char* joinTypeName(JoinType joinType) {
   VELOX_UNREACHABLE();
 }
 
+JoinType joinTypeFromName(const std::string& name);
+
 inline bool isInnerJoin(JoinType joinType) {
   return joinType == JoinType::kInner;
 }
@@ -1304,6 +1320,10 @@ class HashJoinNode : public AbstractJoinNode {
   bool isNullAware() const {
     return nullAware_;
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1673,6 +1693,10 @@ class AssignUniqueIdNode : public PlanNode {
   const std::shared_ptr<std::atomic_int64_t>& uniqueIdCounter() const {
     return uniqueIdCounter_;
   };
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
