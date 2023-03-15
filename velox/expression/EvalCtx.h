@@ -158,6 +158,25 @@ class EvalCtx {
     std::swap(errors_, other);
   }
 
+  void moveAppendErrors(ErrorVectorPtr& other) {
+    if (!errors_) {
+      return;
+    }
+
+    if (!other) {
+      std::swap(errors_, other);
+      return;
+    }
+
+    ensureErrorsVectorSize(other, errors_->size());
+    bits::forEachBit(
+        errors_->rawNulls(), 0, errors_->size(), bits::kNotNull, [&](auto row) {
+          other->set(row, errors_->valueAt(row));
+        });
+
+    errors_.reset();
+  }
+
   bool throwOnError() const {
     return throwOnError_;
   }

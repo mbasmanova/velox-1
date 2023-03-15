@@ -376,6 +376,11 @@ class Expr {
       VectorPtr& result,
       TEval eval);
 
+  /// Return true if errors in evaluation 'vectorFunction_' arguments should be
+  /// thrown as soon as they happen. False if argument errors will be converted
+  /// into a null if another argument for the same row is null.
+  bool throwArgumentErrors(const EvalCtx& context) const;
+
   void evalSimplifiedImpl(
       const SelectivityVector& rows,
       EvalCtx& context,
@@ -586,7 +591,7 @@ class ExprSetSimplified : public ExprSet {
   ExprSetSimplified(
       const std::vector<core::TypedExprPtr>& source,
       core::ExecCtx* FOLLY_NONNULL execCtx)
-      : ExprSet(source, execCtx, /*enableConstantFolding*/ true) {}
+      : ExprSet(source, execCtx, /*enableConstantFolding*/ false) {}
 
   virtual ~ExprSetSimplified() override {}
 

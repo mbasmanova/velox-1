@@ -311,20 +311,17 @@ void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
 // we decide on whether to throw or what errors to leave in 'context'  for  the
 // caller.
 void mergeOrThrowArgumentErrors(
-    EvalCtx::ErrorVectorPtr& errors,
+    const SelectivityVector& rows,
+    EvalCtx::ErrorVectorPtr& originalErrors,
     EvalCtx::ErrorVectorPtr& argumentErrors,
     EvalCtx& context) {
   if (argumentErrors) {
     if (context.throwOnError()) {
       rethrowFirstError(argumentErrors);
     }
-    if (errors) {
-      addErrors(*argumentErrors, *errors);
-    }
-    context.swapErrors(argumentErrors);
-  } else {
-    context.swapErrors(errors);
+    context.addErrors(rows, argumentErrors, originalErrors);
   }
+  context.swapErrors(originalErrors);
 }
 
 // Records errors and nulls from evaluating an argument of a
@@ -350,11 +347,7 @@ void processNullsAndErrorsFromArgument(
     // next arguments and the function.
     if (context.errors()) {
       context.deselectErrors(getRemainingRows());
-      if (argumentErrors) {
-        addErrors(*context.errors(), *argumentErrors);
-      } else {
-        context.swapErrors(argumentErrors);
-      }
+      context.moveAppendErrors(argumentErrors);
     }
     return;
   }
@@ -377,13 +370,7 @@ void processNullsAndErrorsFromArgument(
       }
       remainingRows.updateBounds();
     }
-    if (argumentErrors) {
-      EvalCtx::ErrorVectorPtr temp;
-      context.swapErrors(temp);
-      addErrors(*temp, *argumentErrors);
-    } else {
-      context.swapErrors(argumentErrors);
-    }
+    context.moveAppendErrors(argumentErrors);
   } else {
     if (flatNulls) {
       auto& remainingRows = getRemainingRows();
@@ -415,19 +402,16 @@ void Expr::evalSimplifiedImpl(
   const bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
 
   LocalDecodedVector decodedVector(context);
-  bool throwArgumentErrors = context.throwOnError() &&
-      (!defaultNulls ||
-       (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
 
   EvalCtx::ErrorVectorPtr argumentErrors;
-  EvalCtx::ErrorVectorPtr errors;
+  EvalCtx::ErrorVectorPtr originalErrors;
   if (context.errors()) {
-    context.swapErrors(errors);
+    context.swapErrors(originalErrors);
   }
 
   {
     ScopedVarSetter throwErrors(
-        context.mutableThrowOnError(), throwArgumentErrors);
+        context.mutableThrowOnError(), throwArgumentErrors(context));
 
     for (int32_t i = 0; i < inputs_.size(); ++i) {
       auto& inputValue = inputValues_[i];
@@ -458,30 +442,14 @@ void Expr::evalSimplifiedImpl(
           releaseInputValues(context);
           result = BaseVector::createNullConstant(
               type(), rows.size(), context.pool());
-          mergeOrThrowArgumentErrors(errors, argumentErrors, context);
+          mergeOrThrowArgumentErrors(
+              rows, originalErrors, argumentErrors, context);
           return;
         }
       }
     }
   }
-  mergeOrThrowArgumentErrors(errors, argumentErrors, context);
-  // If any errors occurred evaluating the arguments, it's possible (even
-  // likely) that the values for those arguments were not defined which
-  // could lead to undefined behavior if we try to evaluate the current
-  // function on them.  It's safe to skip evaluating them since the value
-  // for this branch of the expression tree will be NULL for those rows
-  // anyway.
-  if (context.errors()) {
-    context.deselectErrors(remainingRows);
-
-    // All rows have at least one null output or error.
-    if (!remainingRows.hasSelections()) {
-      releaseInputValues(context);
-      result =
-          BaseVector::createNullConstant(type(), rows.size(), context.pool());
-      return;
-    }
-  }
+  mergeOrThrowArgumentErrors(rows, originalErrors, argumentErrors, context);
 
   // We need to deselect rows with errors since otherwise they will
   // be cleared by Conjunct special form , as current assumption is
@@ -1484,6 +1452,13 @@ void Expr::evalAll(
   }
 }
 
+bool Expr::throwArgumentErrors(const EvalCtx& context) const {
+  bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
+  return context.throwOnError() &&
+      (!defaultNulls ||
+       (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
+}
+
 void Expr::evalAllImpl(
     const SelectivityVector& rows,
     EvalCtx& context,
@@ -1496,12 +1471,6 @@ void Expr::evalAllImpl(
   }
   bool tryPeelArgs = deterministic_ ? true : false;
   bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
-  // Set if argument errors should be thrown as soon as they
-  // happen. False if argument errors will be converted into a null if
-  // another argument for the same row is null.
-  bool throwArgumentErrors = context.throwOnError() &&
-      (!defaultNulls ||
-       (supportsFlatNoNullsFastPath() && context.inputFlatNoNulls()));
 
   // Tracks what subset of rows shall un-evaluated inputs and current expression
   // evaluates. Initially points to rows.
@@ -1509,18 +1478,18 @@ void Expr::evalAllImpl(
   LocalDecodedVector localDecoded(context);
 
   EvalCtx::ErrorVectorPtr argumentErrors;
-  EvalCtx::ErrorVectorPtr errors;
+  EvalCtx::ErrorVectorPtr originalErrors;
   // Store pre-existing errors locally and clear them from
   // 'context'. We distinguish between argument errors and
   // pre-existing ones.
   if (context.errors()) {
-    context.swapErrors(errors);
+    context.swapErrors(originalErrors);
   }
 
   inputValues_.resize(inputs_.size());
   {
     ScopedVarSetter throwErrors(
-        context.mutableThrowOnError(), throwArgumentErrors);
+        context.mutableThrowOnError(), throwArgumentErrors(context));
 
     for (int32_t i = 0; i < inputs_.size(); ++i) {
       inputs_[i]->eval(remainingRows.rows(), context, inputValues_[i]);
@@ -1541,13 +1510,14 @@ void Expr::evalAllImpl(
       if (!remainingRows.rows().hasSelections()) {
         releaseInputValues(context);
         setAllNulls(rows, context, result);
-        mergeOrThrowArgumentErrors(errors, argumentErrors, context);
+        mergeOrThrowArgumentErrors(
+            rows, originalErrors, argumentErrors, context);
         return;
       }
     }
   }
 
-  mergeOrThrowArgumentErrors(errors, argumentErrors, context);
+  mergeOrThrowArgumentErrors(rows, originalErrors, argumentErrors, context);
 
   // If any errors occurred evaluating the arguments, it's possible (even
   // likely) that the values for those arguments were not defined which
