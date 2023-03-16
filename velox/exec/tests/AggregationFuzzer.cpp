@@ -86,6 +86,14 @@ class AggregationFuzzer {
   void go();
 
  private:
+  void verifySerDe(const core::PlanNodePtr& plan) {
+    auto serialized = plan->serialize();
+    auto copy =
+        ISerializable::deserialize<core::PlanNode>(serialized, pool_.get());
+
+    VELOX_CHECK_EQ(plan->toString(true, true), copy->toString(true, true));
+  }
+
   struct Stats {
     // Names of functions that were tested.
     std::unordered_set<std::string> functionNames;
@@ -200,6 +208,8 @@ class AggregationFuzzer {
 
       LOG(INFO) << "Testing plan #" << i << " with spilling";
       testPlan(plans[i], true /*injectSpill*/, verifyResults, expected);
+
+      //      verifySerDe(plans[i]);
     }
   }
 
@@ -527,6 +537,10 @@ void AggregationFuzzer::go() {
 
   auto startTime = std::chrono::system_clock::now();
   size_t iteration = 0;
+
+  Type::registerSerDe();
+  core::ITypedExpr::registerSerDe();
+  core::PlanNode::registerSerDe();
 
   while (!isDone(iteration, startTime)) {
     LOG(INFO) << "==============================> Started iteration "
@@ -944,6 +958,9 @@ void AggregationFuzzer::verifyWindow(
           .values(input)
           .window({fmt::format("{} over ({})", aggregates[0], frame.str())})
           .planNode();
+
+  verifySerDe(plan);
+
   if (persistAndRunOnce_) {
     persistReproInfo(input, plan, reproPersistPath_);
   }
@@ -982,6 +999,8 @@ void AggregationFuzzer::verifyAggregation(
                   .singleAggregation(groupingKeys, aggregates, masks)
                   .optionalProject(projections)
                   .planNode();
+
+  verifySerDe(plan);
 
   if (persistAndRunOnce_) {
     persistReproInfo(input, plan, reproPersistPath_);

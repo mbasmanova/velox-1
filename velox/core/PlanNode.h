@@ -76,6 +76,10 @@ class SortOrder {
         (nullsFirst_ ? "FIRST" : "LAST"));
   }
 
+  folly::dynamic serialize() const;
+
+  static SortOrder deserialize(const folly::dynamic& obj);
+
  private:
   bool ascending_;
   bool nullsFirst_;
@@ -441,6 +445,10 @@ class TableScanNode : public PlanNode {
     return "TableScan";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -505,6 +513,10 @@ class TableWriteNode : public PlanNode {
   std::string_view name() const override {
     return "TableWrite";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -719,6 +731,10 @@ class GroupIdNode : public PlanNode {
     return "GroupId";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -753,6 +769,10 @@ class ExchangeNode : public PlanNode {
     return "Exchange";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -781,6 +801,10 @@ class MergeExchangeNode : public ExchangeNode {
   std::string_view name() const override {
     return "MergeExchange";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -820,6 +844,10 @@ class LocalMergeNode : public PlanNode {
   std::string_view name() const override {
     return "LocalMerge";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -911,6 +939,10 @@ class LocalPartitionNode : public PlanNode {
   std::string_view name() const override {
     return "LocalPartition";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1026,6 +1058,10 @@ class PartitionedOutputNode : public PlanNode {
   std::string_view name() const override {
     return "PartitionedOutput";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1360,6 +1396,10 @@ class MergeJoinNode : public AbstractJoinNode {
   std::string_view name() const override {
     return "MergeJoin";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 };
 
 // Cross join.
@@ -1382,6 +1422,10 @@ class CrossJoinNode : public PlanNode {
   std::string_view name() const override {
     return "CrossJoin";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1441,6 +1485,10 @@ class OrderByNode : public PlanNode {
   std::string_view name() const override {
     return "OrderBy";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1503,6 +1551,10 @@ class TopNNode : public PlanNode {
     return "TopN";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -1557,6 +1609,10 @@ class LimitNode : public PlanNode {
   std::string_view name() const override {
     return "Limit";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1618,6 +1674,10 @@ class UnnestNode : public PlanNode {
     return "Unnest";
   }
 
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
@@ -1649,6 +1709,10 @@ class EnforceSingleRowNode : public PlanNode {
   std::string_view name() const override {
     return "EnforceSingleRow";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;
@@ -1726,6 +1790,10 @@ class WindowNode : public PlanNode {
  public:
   enum class WindowType { kRange, kRows };
 
+  static const char* windowTypeName(WindowType type);
+
+  static WindowType windowTypeFromName(const std::string& name);
+
   enum class BoundType {
     kUnboundedPreceding,
     kPreceding,
@@ -1734,18 +1802,30 @@ class WindowNode : public PlanNode {
     kUnboundedFollowing
   };
 
+  static const char* boundTypeName(BoundType type);
+
+  static BoundType boundTypeFromName(const std::string& name);
+
   struct Frame {
     WindowType type;
     BoundType startType;
     TypedExprPtr startValue;
     BoundType endType;
     TypedExprPtr endValue;
+
+    folly::dynamic serialize() const;
+
+    static Frame deserialize(const folly::dynamic& obj);
   };
 
   struct Function {
     CallTypedExprPtr functionCall;
     Frame frame;
     bool ignoreNulls;
+
+    folly::dynamic serialize() const;
+
+    static Function deserialize(const folly::dynamic& obj);
   };
 
   /// @param windowColumnNames specifies the output column
@@ -1789,6 +1869,10 @@ class WindowNode : public PlanNode {
   std::string_view name() const override {
     return "Window";
   }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
   void addDetails(std::stringstream& stream) const override;

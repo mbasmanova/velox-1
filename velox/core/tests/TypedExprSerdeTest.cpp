@@ -32,6 +32,8 @@ class TypedExprSerDeTest : public testing::Test,
   void testSerde(const TypedExprPtr& expression) {
     auto serialized = expression->serialize();
 
+    LOG(ERROR) << serialized;
+
     auto copy =
         velox::ISerializable::deserialize<ITypedExpr>(serialized, pool());
 
@@ -73,6 +75,10 @@ TEST_F(TypedExprSerDeTest, constant) {
   expression = std::make_shared<ConstantTypedExpr>(makeArrayVector<int64_t>({
       {1, 2, 3, 4, 5},
   }));
+  testSerde(expression);
+
+  expression =
+      std::make_shared<ConstantTypedExpr>(DATE(), variant(TypeKind::DATE));
   testSerde(expression);
 }
 

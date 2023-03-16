@@ -1027,6 +1027,31 @@ void ExpressionFuzzer::logStats() {
   }
 }
 
+namespace {
+void diff(const core::TypedExprPtr& a, const core::TypedExprPtr& b) {
+  if (*a == *b) {
+    return;
+  }
+
+  LOG(ERROR) << a->toString();
+  LOG(ERROR) << b->toString();
+
+  if (!(a->type() == b->type())) {
+    LOG(ERROR) << a->type() << " vs. " << b->type();
+    return;
+  }
+
+  if (a->inputs().size() != b->inputs().size()) {
+    LOG(ERROR) << a->inputs().size() << " vs. " << b->inputs().size();
+    return;
+  }
+
+  for (auto i = 0; i < a->inputs().size(); ++i) {
+    diff(a->inputs()[i], b->inputs()[i]);
+  }
+}
+} // namespace
+
 void ExpressionFuzzer::ExprBank::insert(const core::TypedExprPtr& expression) {
   auto typeString = expression->type()->toString();
   if (typeToExprsByLevel_.find(typeString) == typeToExprsByLevel_.end()) {
@@ -1075,6 +1100,9 @@ void ExpressionFuzzer::go() {
   auto startTime = std::chrono::system_clock::now();
   size_t i = 0;
 
+  Type::registerSerDe();
+  core::ITypedExpr::registerSerDe();
+
   while (!isDone(i, startTime)) {
     LOG(INFO) << "==============================> Started iteration " << i
               << " (seed: " << currentSeed_ << ")";
@@ -1105,6 +1133,21 @@ void ExpressionFuzzer::go() {
 
     // Generate expression tree and input data vectors.
     auto plan = generateExpression(rootType);
+
+    // Verify serialization.
+    {
+      auto serialized = plan->serialize();
+      auto copy =
+          ISerializable::deserialize<core::ITypedExpr>(serialized, pool_.get());
+
+      if (!(*plan == *copy)) {
+        LOG(ERROR) << plan->toString();
+        LOG(ERROR) << copy->toString();
+        diff(plan, copy);
+      }
+      VELOX_CHECK(*plan == *copy, "{}", plan->toString());
+    }
+
     auto rowVector = generateRowVector();
 
     // Randomize initial result vector data to test for correct null and data

@@ -98,16 +98,65 @@ TEST_F(PlanNodeSerdeTest, aggregation) {
 }
 
 TEST_F(PlanNodeSerdeTest, hashJoin) {
+  auto probe = makeRowVector(
+      {"t0", "t1", "t2"},
+      {
+          makeFlatVector<int32_t>({1, 2, 3}),
+          makeFlatVector<int64_t>({10, 20, 30}),
+          makeFlatVector<bool>({true, true, false}),
+      });
+
+  auto build = makeRowVector(
+      {"u0", "u1", "u2"},
+      {
+          makeFlatVector<int32_t>({1, 2, 3}),
+          makeFlatVector<int64_t>({10, 20, 30}),
+          makeFlatVector<bool>({true, true, false}),
+      });
+
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-  auto plan = PlanBuilder(planNodeIdGenerator)
-                  .values({data_})
-                  .hashJoin(
-                      {"c0"},
-                      {"c0"},
-                      PlanBuilder(planNodeIdGenerator).values(data_).planNode(),
-                      "",
-                      {})
-                  .planNode();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values({probe})
+          .hashJoin(
+              {"t0"},
+              {"u0"},
+              PlanBuilder(planNodeIdGenerator).values({build}).planNode(),
+              "t1 > u1",
+              {"t0", "t1", "u2", "t2"},
+              core::JoinType::kInner)
+          .planNode();
+
+  testSerde(plan);
+
+  plan = PlanBuilder(planNodeIdGenerator)
+             .values({probe})
+             .hashJoin(
+                 {"t0"},
+                 {"u0"},
+                 PlanBuilder(planNodeIdGenerator).values({build}).planNode(),
+                 "", // no filter
+                 {"t0", "t1", "u2", "t2"},
+                 core::JoinType::kLeft)
+             .planNode();
+
+  testSerde(plan);
+}
+
+TEST_F(PlanNodeSerdeTest, window) {
+  auto plan =
+      PlanBuilder()
+          .values({data_})
+          .window(
+              {"sum(c0) over (partition by c1 order by c2 rows between 10 preceding and 5 following)"})
+          .planNode();
+
+  testSerde(plan);
+
+  plan = PlanBuilder()
+             .values({data_})
+             .window({"sum(c0) over (partition by c1 order by c2)"})
+             .planNode();
 
   testSerde(plan);
 }
