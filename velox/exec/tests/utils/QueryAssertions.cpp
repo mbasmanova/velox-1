@@ -354,11 +354,7 @@ velox::variant const getNullDecimalVariant(::duckdb::Value& value) {
   uint8_t precision;
   uint8_t scale;
   value.type().GetDecimalProperties(precision, scale);
-  auto type = DECIMAL(precision, scale);
-  const auto nullValue = (type->isShortDecimal())
-      ? variant::shortDecimal(std::nullopt, type)
-      : variant::longDecimal(std::nullopt, type);
-  return nullValue;
+  return variant(DECIMAL(precision, scale));
 }
 } // namespace
 
