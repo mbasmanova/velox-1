@@ -299,27 +299,6 @@ class variant {
           bool> = true>
   /* implicit */ variant(const T& v) : variant(static_cast<int64_t>(v)) {}
 
-  // Constructor to generate NULL decimal variants.
-  variant(const TypePtr& type) {
-    VELOX_CHECK(
-        type->isShortDecimal() || type->isLongDecimal(), "Not a Decimal type");
-    if (type->isShortDecimal()) {
-      auto decimalType = type->asShortDecimal();
-      kind_ = TypeKind::SHORT_DECIMAL;
-      ptr_ = (new detail::ShortDecimalCapsule{
-          std::optional<UnscaledShortDecimal>(std::nullopt),
-          decimalType.precision(),
-          decimalType.scale()});
-    } else {
-      auto decimalType = type->asLongDecimal();
-      kind_ = TypeKind::LONG_DECIMAL;
-      ptr_ = (new detail::LongDecimalCapsule{
-          std::optional<UnscaledLongDecimal>(std::nullopt),
-          decimalType.precision(),
-          decimalType.scale()});
-    }
-  }
-
   static variant row(const std::vector<variant>& inputs) {
     return {
         TypeKind::ROW,
