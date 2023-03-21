@@ -23,12 +23,29 @@ using namespace facebook::velox::test;
 
 class ArrayAnyMatchTest : public functions::test::FunctionBaseTest {
  protected:
-  // Evaluate an expression.
+  void testAnyMatch(
+      const std::string& lambdaExpr,
+      const std::vector<std::optional<bool>>& expected,
+      const VectorPtr& input) {
+    auto expression = fmt::format("any_match(c0, x -> ({}))", lambdaExpr);
+    auto result = evaluate(expression, makeRowVector({input}));
+    assertEqualVectors(makeNullableFlatVector<bool>(expected), result);
+  }
+
   void testExpr(
       const std::vector<std::optional<bool>>& expected,
       const std::string& lambdaExpr,
       const VectorPtr& input) {
     auto expression = folly::sformat("any_match(c0, x -> ({}))", lambdaExpr);
+    auto result = evaluate(expression, makeRowVector({input}));
+    assertEqualVectors(makeNullableFlatVector<bool>(expected), result);
+  }
+
+  void testNoneMatch(
+      const std::string& lambdaExpr,
+      const std::vector<std::optional<bool>>& expected,
+      const VectorPtr& input) {
+    auto expression = fmt::format("none_match(c0, x -> ({}))", lambdaExpr);
     auto result = evaluate(expression, makeRowVector({input}));
     assertEqualVectors(makeNullableFlatVector<bool>(expected), result);
   }
@@ -43,22 +60,28 @@ class ArrayAnyMatchTest : public functions::test::FunctionBaseTest {
 };
 
 TEST_F(ArrayAnyMatchTest, basic) {
-  auto input = makeNullableArrayVector<int64_t>(
-      {{std::nullopt, 2, 0}, {-1, 3}, {-2, -3}, {}, {0, std::nullopt}});
-  std::vector<std::optional<bool>> expectedResult{
-      true, true, false, false, std::nullopt};
-  testExpr(expectedResult, "x > 1", input);
+  auto input = makeNullableArrayVector<int64_t>({
+      {std::nullopt, 2, 0},
+      {-1, 3},
+      {-2, -3},
+      {},
+      {0, std::nullopt},
+  });
 
-  expectedResult = {true, false, false, false, true};
-  testExpr(expectedResult, "x is null", input);
+  testAnyMatch("x > 1", {true, true, false, false, std::nullopt}, input);
+
+  testAnyMatch("x is null", {true, false, false, false, true}, input);
+
+  testNoneMatch("x is null", {false, true, true, true, false}, input);
+
+  testNoneMatch("x > 1", {false, false, true, true, std::nullopt}, input);
 
   input = makeNullableArrayVector<bool>(
       {{false, true},
        {false, false},
        {std::nullopt, true},
        {std::nullopt, false}});
-  expectedResult = {true, false, true, std::nullopt};
-  testExpr(expectedResult, "x", input);
+  testAnyMatch("x", {true, false, true, std::nullopt}, input);
 }
 
 TEST_F(ArrayAnyMatchTest, complexTypes) {

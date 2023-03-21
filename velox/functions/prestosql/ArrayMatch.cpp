@@ -24,9 +24,7 @@
 namespace facebook::velox::functions {
 namespace {
 
-enum class MatchMethod { ALL = 0, ANY = 1, NONE = 2 };
-
-template <MatchMethod mathMethod>
+template <bool initialValue, bool earlyReturn>
 class MatchFunction : public exec::VectorFunction {
  private:
   void apply(
@@ -94,8 +92,7 @@ class MatchFunction : public exec::VectorFunction {
   static FOLLY_ALWAYS_INLINE bool hasError(
       const ErrorVectorPtr& errors,
       int idx) {
-    return errors && idx < errors->size() &&
-        !errors->isNullAt(idx);
+    return errors && idx < errors->size() && !errors->isNullAt(idx);
   }
 
  private:
@@ -109,49 +106,40 @@ class MatchFunction : public exec::VectorFunction {
       const exec::LocalDecodedVector& bitsDecoder) const {
     auto size = sizes[row];
     auto offset = offsets[row];
-    if (mathMethod == MatchMethod::NONE) {
-      // TODO: Add none_match
+    bool result = initialValue;
+    auto hasNull = false;
+    std::exception_ptr errorPtr{nullptr};
+    for (auto i = 0; i < size; ++i) {
+      auto idx = offset + i;
+      if (hasError(elementErrors, idx)) {
+        errorPtr = *std::static_pointer_cast<std::exception_ptr>(
+            elementErrors->valueAt(idx));
+        continue;
+      }
+
+      if (bitsDecoder->isNullAt(idx)) {
+        hasNull = true;
+      } else if (bitsDecoder->valueAt<bool>(idx) == earlyReturn) {
+        result = !result;
+        break;
+      }
+    }
+
+    if (result != initialValue) {
+      flatResult->set(row, !initialValue);
+    } else if (errorPtr) {
+      context.setError(row, errorPtr);
+    } else if (hasNull) {
+      flatResult->setNull(row, true);
     } else {
-      // All or any match.
-      // All: early exit on non-match. Initial value = true.
-      // Any: early exit on match. Initial value = false.
-      auto match = mathMethod == MatchMethod::ALL;
-      bool result = match;
-      auto hasNull = false;
-      std::exception_ptr errorPtr{nullptr};
-      for (auto i = 0; i < size; ++i) {
-        auto idx = offset + i;
-        if (hasError(elementErrors, idx)) {
-          errorPtr = *std::static_pointer_cast<std::exception_ptr>(
-              elementErrors->valueAt(idx));
-          continue;
-        }
-
-        if (bitsDecoder->isNullAt(idx)) {
-          hasNull = true;
-        } else if (bitsDecoder->valueAt<bool>(idx) == !match) {
-          result = !result;
-          break;
-        }
-      }
-
-      if (result != match) {
-        flatResult->set(row, !match);
-      } else if (errorPtr) {
-        context.setError(row, errorPtr);
-      } else if (hasNull) {
-        flatResult->setNull(row, true);
-      } else {
-        flatResult->set(row, match);
-      }
+      flatResult->set(row, initialValue);
     }
   }
 };
 
-class AllMatchFunction : public MatchFunction<MatchMethod::ALL> {};
-class AnyMatchFunction : public MatchFunction<MatchMethod::ANY> {};
-
-// TODO: add class NoneMatchFunction
+class AllMatchFunction : public MatchFunction<true, false> {};
+class AnyMatchFunction : public MatchFunction<false, true> {};
+class NoneMatchFunction : public MatchFunction<true, true> {};
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
   // array(T), function(T) -> boolean
@@ -174,5 +162,10 @@ VELOX_DECLARE_VECTOR_FUNCTION(
     udf_any_match,
     signatures(),
     std::make_unique<AnyMatchFunction>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_none_match,
+    signatures(),
+    std::make_unique<NoneMatchFunction>());
 
 } // namespace facebook::velox::functions
