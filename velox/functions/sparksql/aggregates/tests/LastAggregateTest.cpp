@@ -18,15 +18,19 @@
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 
-namespace facebook::velox::functions::sparksql::aggregates::test {
+using namespace facebook::velox::aggregate::test;
+
+namespace facebook::velox::functions::sparksql::aggregate::test {
 
 namespace {
 
-class LastAggregateTest : public aggregate::test::AggregationTestBase {
- public:
-  LastAggregateTest() {
-    aggregate::test::AggregationTestBase::SetUp();
-    aggregates::registerAggregateFunctions("");
+using namespace facebook::velox::aggregate::test;
+
+class LastAggregateTest : public AggregationTestBase {
+ protected:
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    aggregate::registerAggregateFunctions("spark_");
   }
 
   template <typename T>
@@ -37,8 +41,6 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
             98, // size
             [](auto row) { return row; }, // valueAt
             [](auto row) { return row % 3 == 0; }), // nullAt
-        makeConstant<bool>(true, 98),
-        makeConstant<bool>(false, 98),
     })};
 
     createDuckDbTable(vectors);
@@ -47,7 +49,7 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
     testAggregations(
         vectors,
         {"c0"},
-        {"last(c1, c2)"},
+        {"spark_last_ignore_null(c1)"},
         "SELECT c0, last(c1 ORDER BY c1 NULLS FIRST) FROM tmp GROUP BY c0");
 
     // Verify when ignoreNull is false.
@@ -59,10 +61,7 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
             [](auto row) { return 91 + row; }, // valueAt
             [](auto row) { return (91 + row) % 3 == 0; }), // nullAt
     })};
-    testAggregations(vectors, {"c0"}, {"last(c1, c3)"}, expected);
-
-    // Verify when ignoreNull is not provided. Defaults to false.
-    testAggregations(vectors, {"c0"}, {"last(c1)"}, expected);
+    testAggregations(vectors, {"c0"}, {"spark_last(c1)"}, expected);
   }
 
   template <typename T>
@@ -73,15 +72,12 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
 
     // Verify when ignoreNull is true.
     auto expectedTrue = {makeRowVector({makeNullableFlatVector<T>({2})})};
-    testAggregations(vectors, {}, {"last(c0, TRUE)"}, expectedTrue);
+    testAggregations(vectors, {}, {"spark_last_ignore_null(c0)"}, expectedTrue);
 
     // Verify when ignoreNull is false.
     auto expectedFalse = {
         makeRowVector({makeNullableFlatVector<T>({std::nullopt})})};
-    testAggregations(vectors, {}, {"last(c0, FALSE)"}, expectedFalse);
-
-    // Verify when ignoreNull is not provided. Defaults to false.
-    testAggregations(vectors, {}, {"last(c0)"}, expectedFalse);
+    testAggregations(vectors, {}, {"spark_last(c0)"}, expectedFalse);
   }
 };
 
@@ -145,7 +141,7 @@ TEST_F(LastAggregateTest, doubleGlobal) {
   testGlobalAggregation<double>();
 }
 
-// Vefify aggregation with group by keys for VARCHAR.
+// Verify aggregation with group by keys for VARCHAR.
 TEST_F(LastAggregateTest, varcharGroupBy) {
   std::vector<std::string> data(98);
   auto vectors = {makeRowVector({
@@ -157,8 +153,6 @@ TEST_F(LastAggregateTest, varcharGroupBy) {
             return StringView(data[row]);
           }, // valueAt
           [](auto row) { return row % 3 == 0; }), // nullAt
-      makeConstant<bool>(true, 98),
-      makeConstant<bool>(false, 98),
   })};
 
   createDuckDbTable(vectors);
@@ -167,8 +161,8 @@ TEST_F(LastAggregateTest, varcharGroupBy) {
   testAggregations(
       vectors,
       {"c0"},
-      {"last(c1, c2)"},
-      "SELECT c0, last(c1 ORDER BY c1 NULLS FIRST) FROM tmp WHERE c1 IS NOT NULL GROUP BY c0");
+      {"spark_last_ignore_null(c1)"},
+      "SELECT c0, last(c1) FROM tmp WHERE c1 IS NOT NULL GROUP BY c0");
 
   // Verify when ignoreNull is false.
   // Expected result should have last 7 rows [91..98) including nulls.
@@ -179,10 +173,7 @@ TEST_F(LastAggregateTest, varcharGroupBy) {
           [&data](auto row) { return StringView(data[91 + row]); }, // valueAt
           [](auto row) { return (91 + row) % 3 == 0; }), // nullAt
   })};
-  testAggregations(vectors, {"c0"}, {"last(c1, c3)"}, expected);
-
-  // Verify when ignoreNull is not provided. Defaults to false.
-  testAggregations(vectors, {"c0"}, {"last(c1)"}, expected);
+  testAggregations(vectors, {"c0"}, {"spark_last(c1)"}, expected);
 }
 
 // Verify global aggregation for VARCHAR.
@@ -195,15 +186,12 @@ TEST_F(LastAggregateTest, varcharGlobal) {
   // Verify when ignoreNull is true.
   auto expectedTrue = {
       makeRowVector({makeNullableFlatVector<std::string>({"b"})})};
-  testAggregations(vectors, {}, {"last(c0, TRUE)"}, expectedTrue);
+  testAggregations(vectors, {}, {"spark_last_ignore_null(c0)"}, expectedTrue);
 
   // Verify when ignoreNull is false.
   auto expectedFalse = {
       makeRowVector({makeNullableFlatVector<std::string>({std::nullopt})})};
-  testAggregations(vectors, {}, {"last(c0, FALSE)"}, expectedFalse);
-
-  // Verify when ignoreNull is not provided. Defaults to false.
-  testAggregations(vectors, {}, {"last(c0)"}, expectedFalse);
+  testAggregations(vectors, {}, {"spark_last(c0)"}, expectedFalse);
 }
 
 // Verify aggregation with group by keys for ARRAY.
@@ -216,8 +204,6 @@ TEST_F(LastAggregateTest, arrayGroupBy) {
           [](auto row, auto idx) { return row * 100 + idx; }, // valueAt
           // Even rows are null.
           [](auto row) { return row % 2 == 0; }), // nullAt
-      makeConstant<bool>(true, 98),
-      makeConstant<bool>(false, 98),
   })};
 
   auto expectedTrue = {makeRowVector({
@@ -236,7 +222,8 @@ TEST_F(LastAggregateTest, arrayGroupBy) {
   })};
 
   // Verify when ignoreNull is true.
-  testAggregations(vectors, {"c0"}, {"last(c1, c2)"}, expectedTrue);
+  testAggregations(
+      vectors, {"c0"}, {"spark_last_ignore_null(c1)"}, expectedTrue);
 
   // Verify when ignoreNull is false.
   // Expected result should have last 7 rows [91..98) of input |vectors|
@@ -249,10 +236,7 @@ TEST_F(LastAggregateTest, arrayGroupBy) {
           [](auto row) { return (91 + row) % 2 == 0; }), // nullAt
   })};
 
-  testAggregations(vectors, {"c0"}, {"last(c1, c3)"}, expectedFalse);
-
-  // Verify when ignoreNull is not provided. Defaults to false.
-  testAggregations(vectors, {"c0"}, {"last(c1)"}, expectedFalse);
+  testAggregations(vectors, {"c0"}, {"spark_last(c1)"}, expectedFalse);
 }
 
 // Verify global aggregation for ARRAY.
@@ -267,16 +251,13 @@ TEST_F(LastAggregateTest, arrayGlobal) {
   })};
 
   // Verify when ignoreNull is true.
-  testAggregations(vectors, {}, {"last(c0, TRUE)"}, expectedTrue);
+  testAggregations(vectors, {}, {"spark_last_ignore_null(c0)"}, expectedTrue);
 
   // Verify when ignoreNull is false.
   auto expectedFalse = {makeRowVector({
       makeNullableArrayVector<int64_t>({std::nullopt}),
   })};
-  testAggregations(vectors, {}, {"last(c0, FALSE)"}, expectedFalse);
-
-  // Verify when ignoreNull is not provided. Defaults to false.
-  testAggregations(vectors, {}, {"last(c0)"}, expectedFalse);
+  testAggregations(vectors, {}, {"spark_last(c0)"}, expectedFalse);
 }
 
 // Verify aggregation with group by keys for MAP column.
@@ -300,7 +281,7 @@ TEST_F(LastAggregateTest, mapGroupBy) {
           [](auto idx) { return (92 + idx) * 0.1; }), // valueAt
   })};
 
-  testAggregations(vectors, {"c0"}, {"last(c1)"}, expected);
+  testAggregations(vectors, {"c0"}, {"spark_last(c1)"}, expected);
 }
 
 // Verify global aggregation for MAP column.
@@ -318,17 +299,14 @@ TEST_F(LastAggregateTest, mapGlobal) {
   })};
 
   // Verify when ignoreNull is true.
-  testAggregations(vectors, {}, {"last(c0, TRUE)"}, expectedTrue);
+  testAggregations(vectors, {}, {"spark_last_ignore_null(c0)"}, expectedTrue);
 
   // Verify when ignoreNull is false.
   auto expectedFalse = {makeRowVector({
       makeNullableMapVector<int64_t, float>({std::nullopt}),
   })};
-  testAggregations(vectors, {}, {"last(c0, FALSE)"}, expectedFalse);
-
-  // Verify when ignoreFalse is not provided. Defaults to false.
-  testAggregations(vectors, {}, {"last(c0)"}, expectedFalse);
+  testAggregations(vectors, {}, {"spark_last(c0)"}, expectedFalse);
 }
 
 } // namespace
-} // namespace facebook::velox::functions::sparksql::aggregates::test
+} // namespace facebook::velox::functions::sparksql::aggregate::test
