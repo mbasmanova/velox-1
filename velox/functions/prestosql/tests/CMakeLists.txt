@@ -66,6 +66,7 @@ add_executable(
   RoundTest.cpp
   ScalarFunctionRegTest.cpp
   SliceTest.cpp
+  SequenceTest.cpp
   SplitTest.cpp
   StringFunctionsTest.cpp
   TransformTest.cpp
