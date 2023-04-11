@@ -73,12 +73,13 @@ class FirstAggregateTest : public AggregationTestBase {
 
     // Verify when ignoreNull is true.
     auto expectedTrue = {makeRowVector({makeNullableFlatVector<T>({1})})};
-    testAggregations(vectors, {}, {"spark_first_ignore_null(c0)"}, expectedTrue);
+    testAggregations(
+        vectors, {}, {"spark_first_ignore_null(c0)"}, expectedTrue);
 
     // Verify when ignoreNull is false.
-//    auto expectedFalse = {
-//        makeRowVector({makeNullableFlatVector<T>({std::nullopt})})};
-//    testAggregations(vectors, {}, {"spark_first(c0)"}, expectedFalse);
+    auto expectedFalse = {
+        makeRowVector({makeNullableFlatVector<T>({std::nullopt})})};
+    testAggregations(vectors, {}, {"spark_first(c0)"}, expectedFalse);
   }
 };
 
@@ -218,8 +219,7 @@ TEST_F(FirstAggregateTest, arrayGroupBy) {
           },
           [](auto row, auto idx) {
             // Even rows are null, for these return values for (row - 7)
-            return (row % 2) ? row * 100 + idx
-                                    : (row + 7) * 100 + idx;
+            return (row % 2) ? row * 100 + idx : (row + 7) * 100 + idx;
           }),
   })};
 
