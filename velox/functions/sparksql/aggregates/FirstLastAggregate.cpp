@@ -312,23 +312,23 @@ bool registerFirstLast(const std::string& name) {
         TypeKind dataKind = inputType->kind();
         switch (dataKind) {
           case TypeKind::TINYINT:
-            return std::make_unique<
-                TClass<true, ignoreNull, int8_t>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, int8_t>>(
+                resultType);
           case TypeKind::SMALLINT:
-            return std::make_unique<
-                TClass<true, ignoreNull, int16_t>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, int16_t>>(
+                resultType);
           case TypeKind::INTEGER:
-            return std::make_unique<
-                TClass<true, ignoreNull, int32_t>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, int32_t>>(
+                resultType);
           case TypeKind::BIGINT:
-            return std::make_unique<
-                TClass<true, ignoreNull, int64_t>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, int64_t>>(
+                resultType);
           case TypeKind::REAL:
-            return std::make_unique<
-                TClass<true, ignoreNull, float>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, float>>(
+                resultType);
           case TypeKind::DOUBLE:
-            return std::make_unique<
-                TClass<true, ignoreNull, double>>(resultType);
+            return std::make_unique<TClass<true, ignoreNull, double>>(
+                resultType);
           case TypeKind::VARCHAR:
           case TypeKind::ARRAY:
           case TypeKind::MAP:
