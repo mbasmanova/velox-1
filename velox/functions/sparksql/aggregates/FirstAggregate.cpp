@@ -13,17 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include "velox/functions/sparksql/aggregates/Register.h"
-
-#include "velox/functions/sparksql/aggregates/BitwiseXorAggregate.h"
+#include "velox/functions/sparksql/aggregates/FirstAggregate.h"
 
 namespace facebook::velox::functions::sparksql::aggregate {
 
-extern void registerFirstLastAggregate(const std::string& prefix);
-
-void registerAggregateFunctions(const std::string& prefix) {
-  registerFirstLastAggregate(prefix);
-  aggregate::registerBitwiseXorAggregate(prefix + "bit_xor");
+void registerFirstAggregate(const std::string& prefix) {
+  registerFirst<false>(prefix + "first");
+  registerFirst<true>(prefix + "first_ignore_null");
 }
 } // namespace facebook::velox::functions::sparksql::aggregate

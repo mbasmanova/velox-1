@@ -57,7 +57,10 @@ int main(int argc, char** argv) {
   // can be specified to be used for results verification. If no transformation
   // is specified, results are not verified.
   std::unordered_map<std::string, std::string> orderDependentFunctions = {
-      {prefix + "last", ""}, {prefix + "last_ignore_null", ""}};
+      {prefix + "last", ""},
+      {prefix + "last_ignore_null", ""},
+      {prefix + "first", ""},
+      {prefix + "first_ignore_null", ""}};
 
   size_t initialSeed = FLAGS_seed == 0 ? std::time(nullptr) : FLAGS_seed;
   return AggregationFuzzerRunner::run(
