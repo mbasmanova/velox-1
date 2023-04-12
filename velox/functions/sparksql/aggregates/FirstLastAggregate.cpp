@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <fmt/format.h>
 #include <string>
 
 #include "velox/expression/FunctionSignature.h"
@@ -27,12 +26,6 @@ namespace {
 
 using namespace facebook::velox::aggregate;
 
-template <typename T>
-struct SimpleAccumulator {
-  bool valid_ = false;
-  T value_;
-};
-
 /// FirstLastAggregate returns the first or last value of |expr| for a group of
 /// rows. If |ignoreNull| is true, returns only non-null values.
 ///
@@ -40,25 +33,23 @@ struct SimpleAccumulator {
 /// of the rows which may be non-deterministic after a shuffle.  This can be
 /// made deterministic by providing explicit ordering by adding order by or sort
 /// by in query.
-template <
-    bool numeric,
-    template <typename T>
-    class TAccumulator,
-    typename TDataType>
+template <bool numeric, typename TDataType>
 class FirstLastAggregateBase
     : public SimpleNumericAggregate<TDataType, TDataType, TDataType> {
   using BaseAggregate = SimpleNumericAggregate<TDataType, TDataType, TDataType>;
+
+ protected:
+  using TAccumulator = std::conditional_t<
+      numeric,
+      std::optional<TDataType>,
+      std::optional<SingleValueAccumulator>>;
 
  public:
   explicit FirstLastAggregateBase(TypePtr resultType)
       : BaseAggregate(resultType) {}
 
   int32_t accumulatorFixedWidthSize() const override {
-    if (numeric) {
-      return sizeof(TAccumulator<TDataType>);
-    } else {
-      return sizeof(TAccumulator<SingleValueAccumulator>);
-    }
+    return sizeof(TAccumulator);
   }
 
   void initializeNewGroups(
@@ -66,26 +57,18 @@ class FirstLastAggregateBase
       folly::Range<const vector_size_t*> indices) override {
     exec::Aggregate::setAllNulls(groups, indices);
 
-    if (numeric) {
-      for (auto i : indices) {
-        new (groups[i] + exec::Aggregate::offset_) TAccumulator<TDataType>();
-      }
-    } else {
-      for (auto i : indices) {
-        new (groups[i] + exec::Aggregate::offset_)
-            TAccumulator<SingleValueAccumulator>();
-      }
+    for (auto i : indices) {
+      new (groups[i] + exec::Aggregate::offset_) TAccumulator();
     }
   }
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
       override {
-    if (numeric) {
+    if constexpr (numeric) {
       BaseAggregate::doExtractValues(
           groups, numGroups, result, [&](char* group) {
-            auto accumulator =
-                exec::Aggregate::value<TAccumulator<TDataType>>(group);
-            return accumulator->value_;
+            auto accumulator = exec::Aggregate::value<TAccumulator>(group);
+            return accumulator->value();
           });
     } else {
       VELOX_CHECK(result);
@@ -99,10 +82,8 @@ class FirstLastAggregateBase
           (*result)->setNull(i, true);
         } else {
           exec::Aggregate::clearNull(rawNulls, i);
-          auto accumulator =
-              exec::Aggregate::value<TAccumulator<SingleValueAccumulator>>(
-                  group);
-          accumulator->value_.read(*result, i);
+          auto accumulator = exec::Aggregate::value<TAccumulator>(group);
+          accumulator->value().read(*result, i);
         }
       }
     }
@@ -114,23 +95,20 @@ class FirstLastAggregateBase
   }
 
   void destroy(folly::Range<char**> groups) override {
-    if (!numeric) {
+    if constexpr (!numeric) {
       for (auto group : groups) {
-        auto accumulator =
-            exec::Aggregate::value<TAccumulator<SingleValueAccumulator>>(group);
-        accumulator->value_.destroy(exec::Aggregate::allocator_);
+        auto accumulator = exec::Aggregate::value<TAccumulator>(group);
+        accumulator->value().destroy(exec::Aggregate::allocator_);
       }
     }
   }
 };
 
 template <bool ignoreNull, typename TDataType, bool numeric>
-class FirstAggregate
-    : public FirstLastAggregateBase<numeric, SimpleAccumulator, TDataType> {
+class FirstAggregate : public FirstLastAggregateBase<numeric, TDataType> {
  public:
   explicit FirstAggregate(TypePtr resultType)
-      : FirstLastAggregateBase<numeric, SimpleAccumulator, TDataType>(
-            resultType) {}
+      : FirstLastAggregateBase<numeric, TDataType>(resultType) {}
 
   void addRawInput(
       char** groups,
@@ -171,79 +149,60 @@ class FirstAggregate
   }
 
  private:
+  using TAccumulator =
+      typename FirstLastAggregateBase<numeric, TDataType>::TAccumulator;
+
   // If we found a valid value, set accumulator valid flags to true, then skip
   // remaining rows in group.
   bool updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
-    if (!numeric) {
+    auto accumulator = exec::Aggregate::value<TAccumulator>(group);
+    if (accumulator->has_value()) {
+      return false;
+    }
+
+    if constexpr (!numeric) {
       return updateNonNumeric(i, group, decoded);
-    }
-
-    auto accumulator =
-        exec::Aggregate::value<SimpleAccumulator<TDataType>>(group);
-    if (accumulator->valid_) {
-      return false;
-    }
-    exec::Aggregate::clearNull(group);
-
-    if (!ignoreNull) {
+    } else {
       if (!decoded.isNullAt(i)) {
-        auto value = decoded.valueAt<TDataType>(i);
-        accumulator->value_ = value;
-      } else {
-        exec::Aggregate::setNull(group);
+        exec::Aggregate::clearNull(group);
+        *accumulator = decoded.valueAt<TDataType>(i);
+        return false;
       }
-      accumulator->valid_ = true;
-      return false;
+
+      if constexpr (ignoreNull) {
+        return true;
+      } else {
+        *accumulator = TDataType();
+        return false;
+      }
     }
-    if (!decoded.isNullAt(i)) {
-      auto value = decoded.valueAt<TDataType>(i);
-      accumulator->value_ = value;
-      accumulator->valid_ = true;
-      return false;
-    }
-    exec::Aggregate::setNull(group);
-    return true;
   }
 
   bool updateNonNumeric(vector_size_t i, char* group, DecodedVector& decoded) {
-    auto accumulator =
-        exec::Aggregate::value<SimpleAccumulator<SingleValueAccumulator>>(
-            group);
-    if (accumulator->valid_) {
-      return false;
-    }
-    exec::Aggregate::clearNull(group);
+    auto accumulator = exec::Aggregate::value<TAccumulator>(group);
 
-    const auto* indices = decoded.indices();
-    const auto* baseVector = decoded.base();
-    if (!ignoreNull) {
-      if (!decoded.isNullAt(i)) {
-        accumulator->value_.write(
-            baseVector, indices[i], exec::Aggregate::allocator_);
-      } else {
-        exec::Aggregate::setNull(group);
-      }
-      accumulator->valid_ = true;
-      return false;
-    }
     if (!decoded.isNullAt(i)) {
-      accumulator->value_.write(
-          baseVector, indices[i], exec::Aggregate::allocator_);
-      accumulator->valid_ = true;
+      exec::Aggregate::clearNull(group);
+      *accumulator = SingleValueAccumulator();
+      accumulator->value().write(
+          decoded.base(), decoded.index(i), exec::Aggregate::allocator_);
       return false;
     }
-    exec::Aggregate::setNull(group);
-    return true;
+
+    if constexpr (ignoreNull) {
+      return true;
+    } else {
+      *accumulator = SingleValueAccumulator();
+      return false;
+    }
   }
 };
 
 template <bool ignoreNull, typename TDataType, bool numeric>
-class LastAggregate
-    : public FirstLastAggregateBase<numeric, SimpleAccumulator, TDataType> {
+class LastAggregate : public FirstLastAggregateBase<numeric, TDataType> {
  public:
   explicit LastAggregate(TypePtr resultType)
-      : FirstLastAggregateBase<numeric, SimpleAccumulator, TDataType>(
-            resultType) {}
+      : FirstLastAggregateBase<numeric, TDataType>(resultType) {}
 
   void addRawInput(
       char** groups,
@@ -284,57 +243,44 @@ class LastAggregate
   }
 
  private:
+  using TAccumulator =
+      typename FirstLastAggregateBase<numeric, TDataType>::TAccumulator;
+
   // Use accumulator valid flags to identify last valid row in group when
   // ignoreNull is true.
   void updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
-    if (!numeric) {
+    if constexpr (!numeric) {
       return updateNonNumeric(i, group, decoded);
-    }
-    auto accumulator =
-        exec::Aggregate::value<SimpleAccumulator<TDataType>>(group);
-    exec::Aggregate::clearNull(group);
+    } else {
+      auto accumulator = exec::Aggregate::value<TAccumulator>(group);
 
-    if (!ignoreNull) {
       if (!decoded.isNullAt(i)) {
-        auto value = decoded.valueAt<TDataType>(i);
-        accumulator->value_ = value;
-      } else {
-        exec::Aggregate::setNull(group);
+        exec::Aggregate::clearNull(group);
+        *accumulator = decoded.valueAt<TDataType>(i);
+        return;
       }
-      return;
-    }
-    if (!decoded.isNullAt(i)) {
-      auto value = decoded.valueAt<TDataType>(i);
-      accumulator->value_ = value;
-      accumulator->valid_ = true;
-    } else if (!accumulator->valid_) {
-      exec::Aggregate::setNull(group);
+
+      if constexpr (!ignoreNull) {
+        exec::Aggregate::setNull(group);
+        *accumulator = TDataType();
+      }
     }
   }
 
   void updateNonNumeric(vector_size_t i, char* group, DecodedVector& decoded) {
-    auto accumulator =
-        exec::Aggregate::value<SimpleAccumulator<SingleValueAccumulator>>(
-            group);
-    exec::Aggregate::clearNull(group);
+    auto accumulator = exec::Aggregate::value<TAccumulator>(group);
 
-    const auto* indices = decoded.indices();
-    const auto* baseVector = decoded.base();
-    if (!ignoreNull) {
-      if (!decoded.isNullAt(i)) {
-        accumulator->value_.write(
-            baseVector, indices[i], exec::Aggregate::allocator_);
-      } else {
-        exec::Aggregate::setNull(group);
-      }
+    if (!decoded.isNullAt(i)) {
+      exec::Aggregate::clearNull(group);
+      *accumulator = SingleValueAccumulator();
+      accumulator->value().write(
+          decoded.base(), decoded.index(i), exec::Aggregate::allocator_);
       return;
     }
-    if (!decoded.isNullAt(i)) {
-      accumulator->value_.write(
-          baseVector, indices[i], exec::Aggregate::allocator_);
-      accumulator->valid_ = true;
-    } else if (!accumulator->valid_) {
+
+    if constexpr (!ignoreNull) {
       exec::Aggregate::setNull(group);
+      *accumulator = SingleValueAccumulator();
     }
   }
 };
@@ -343,35 +289,13 @@ class LastAggregate
 
 template <template <bool B1, typename T, bool B2> class TClass, bool ignoreNull>
 bool registerFirstLast(const std::string& name) {
-  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
-  for (const auto& inputType :
-       {"tinyint",
-        "smallint",
-        "integer",
-        "bigint",
-        "real",
-        "double",
-        "varchar"}) {
-    signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                             .argumentType(inputType)
-                             .intermediateType(inputType)
-                             .returnType(inputType)
-                             .build());
-  }
-  signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                           .typeVariable("T")
-                           .argumentType("array(T)")
-                           .intermediateType("array(T)")
-                           .returnType("array(T)")
-                           .build());
-
-  signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                           .typeVariable("K")
-                           .typeVariable("V")
-                           .argumentType("map(K, V)")
-                           .intermediateType("map(K, V)")
-                           .returnType("map(K, V)")
-                           .build());
+  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures = {
+      exec::AggregateFunctionSignatureBuilder()
+          .typeVariable("T")
+          .argumentType("T")
+          .intermediateType("T")
+          .returnType("T")
+          .build()};
 
   return exec::registerAggregateFunction(
       name,
