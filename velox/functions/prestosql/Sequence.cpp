@@ -33,19 +33,7 @@ class SequenceFunction : public exec::VectorFunction {
       const TypePtr& outputType,
       exec::EvalCtx& context,
       VectorPtr& result) const override {
-    VectorPtr localResult;
-    try {
-      if (args[0]->type() == BIGINT()) {
-        localResult = applyNumber(rows, args, outputType, context);
-      } else {
-        VELOX_NYI(
-            "Unsupported type for argument of 'sequence' function: ",
-            args[0]->type()->toString());
-      }
-    } catch (const std::exception& e) {
-      context.setErrors(rows, std::current_exception());
-      return;
-    }
+    VectorPtr localResult = applyNumber(rows, args, outputType, context);
     context.moveOrCopyResult(localResult, rows, result);
   }
 
@@ -67,47 +55,48 @@ class SequenceFunction : public exec::VectorFunction {
       stepVector = decodedArgs.at(2);
     }
 
-    context.applyToSelectedNoThrow(rows, [&](auto row) {
-      numElements += sequenceCount(startVector, stopVector, stepVector, row);
-    });
-
-    VectorPtr elements = BaseVector::create(BIGINT(), numElements, pool);
     BufferPtr sizes = allocateSizes(numRows, pool);
     BufferPtr offsets = allocateOffsets(numRows, pool);
-    auto rawElements = elements->asFlatVector<int64_t>()->mutableRawValues();
+
     auto rawSizes = sizes->asMutable<vector_size_t>();
     auto rawOffsets = offsets->asMutable<vector_size_t>();
 
+    SelectivityVector remainingRows = rows;
+    context.applyToSelectedNoThrow(remainingRows, [&](auto row) {
+      auto start = startVector->valueAt<int64_t>(row);
+      auto stop = stopVector->valueAt<int64_t>(row);
+      const int64_t step = (stepVector == nullptr)
+          ? (stop >= start ? 1 : -1)
+          : stepVector->valueAt<int64_t>(row);
+      checkArguments(start, stop, step);
+      rawSizes[row] = (stop - start) / step + 1;
+      numElements += rawSizes[row];
+    });
+
+    context.deselectErrors(remainingRows);
+
+    VectorPtr elements = BaseVector::create(BIGINT(), numElements, pool);
+    auto rawElements = elements->asFlatVector<int64_t>()->mutableRawValues();
+
     vector_size_t elementsOffset = 0;
-    context.applyToSelectedNoThrow(rows, [&](auto row) {
-      rawOffsets[row] = elementsOffset;
-      rawSizes[row] = sequenceCount(startVector, stopVector, stepVector, row);
-      writeToElements(
-          rawElements,
-          elementsOffset,
-          startVector,
-          stopVector,
-          stepVector,
-          row);
-      elementsOffset += rawSizes[row];
+    context.applyToSelectedNoThrow(remainingRows, [&](auto row) {
+      const auto numElements = rawSizes[row];
+      if (numElements) {
+        auto start = startVector->valueAt<int64_t>(row);
+
+        rawOffsets[row] = elementsOffset;
+        rawSizes[row] = numElements;
+        std::iota(
+            rawElements + elementsOffset,
+            rawElements + elementsOffset + numElements,
+            start);
+
+        elementsOffset += numElements;
+      }
     });
 
     return std::make_shared<ArrayVector>(
         pool, outputType, nullptr, numRows, offsets, sizes, elements);
-  }
-
-  static vector_size_t sequenceCount(
-      DecodedVector* startVector,
-      DecodedVector* stopVector,
-      DecodedVector* stepVector,
-      vector_size_t row) {
-    auto start = startVector->valueAt<int64_t>(row);
-    auto stop = stopVector->valueAt<int64_t>(row);
-    const int64_t step = (stepVector == nullptr)
-        ? (stop >= start ? 1 : -1)
-        : stepVector->valueAt<int64_t>(row);
-    checkArguments(start, stop, step);
-    return (vector_size_t)((stop - start) / step + 1);
   }
 
   static void checkArguments(int64_t start, int64_t stop, int64_t step) {
@@ -120,25 +109,6 @@ class SequenceFunction : public exec::VectorFunction {
         (stop - start) / step + 1,
         kMaxResultEntries,
         "result of sequence function must not have more than 10000 entries");
-  }
-
-  static void writeToElements(
-      int64_t* elements,
-      vector_size_t elementsOffset,
-      DecodedVector* startVector,
-      DecodedVector* stopVector,
-      DecodedVector* stepVector,
-      vector_size_t row) {
-    auto start = startVector->valueAt<int64_t>(row);
-    auto stop = stopVector->valueAt<int64_t>(row);
-    const int64_t step = (stepVector == nullptr)
-        ? (stop >= start ? 1 : -1)
-        : stepVector->valueAt<int64_t>(row);
-    const auto numElements = (stop - start) / step + 1;
-    const auto valueEnd = start + step * numElements;
-    for (auto value = start; value != valueEnd; value += step) {
-      elements[elementsOffset++] = value;
-    }
   }
 };
 
