@@ -224,13 +224,13 @@ class FirstAggregate
       }
       accumulator->valid_ = true;
       return false;
-    }
-    if (!decoded.isNullAt(i)) {
+    } else if (!decoded.isNullAt(i)) {
       accumulator->value_.write(
           baseVector, indices[i], exec::Aggregate::allocator_);
       accumulator->valid_ = true;
       return false;
     }
+    exec::Aggregate::setNull(group);
     return true;
   }
 };
@@ -321,6 +321,8 @@ class LastAggregate
     } else if (!decoded.isNullAt(i)) {
       accumulator->value_.write(
           baseVector, indices[i], exec::Aggregate::allocator_);
+    } else {
+      exec::Aggregate::setNull(group);
     }
   }
 };
