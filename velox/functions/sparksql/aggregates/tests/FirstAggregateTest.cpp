@@ -20,7 +20,7 @@
 
 using namespace facebook::velox::aggregate::test;
 
-namespace facebook::velox::functions::sparksql::aggregate::test {
+namespace facebook::velox::functions::sparksql::aggregates::test {
 
 namespace {
 
@@ -30,7 +30,7 @@ class FirstAggregateTest : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-    aggregate::registerAggregateFunctions("spark_");
+    aggregates::registerAggregateFunctions("spark_");
     AggregationTestBase::disableTestStreaming();
   }
 
@@ -311,4 +311,4 @@ TEST_F(FirstAggregateTest, mapGlobal) {
 }
 
 } // namespace
-} // namespace facebook::velox::functions::sparksql::aggregate::test
+} // namespace facebook::velox::functions::sparksql::aggregates::test

@@ -16,13 +16,11 @@
 #include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 
-using namespace facebook::velox::aggregate::test;
-
-namespace facebook::velox::functions::sparksql::aggregate::test {
+namespace facebook::velox::functions::sparksql::aggregates::test {
 
 namespace {
 
-class BitwiseXorAggregationTest : public AggregationTestBase {
+class BitwiseXorAggregationTest : public aggregate::test::AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
@@ -57,4 +55,4 @@ TEST_F(BitwiseXorAggregationTest, bitwiseXor) {
 }
 
 } // namespace
-} // namespace facebook::velox::functions::sparksql::aggregate::test
+} // namespace facebook::velox::functions::sparksql::aggregates::test

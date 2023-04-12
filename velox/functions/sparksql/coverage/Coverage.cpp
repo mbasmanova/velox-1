@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
   functions::sparksql::registerFunctions("");
 
   // Register Spark aggregate functions.
-  functions::sparksql::aggregate::registerAggregateFunctions("");
+  functions::sparksql::aggregates::registerAggregateFunctions("");
 
   if (FLAGS_all) {
     functions::printCoverageMapForAll(":spark");

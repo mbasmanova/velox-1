@@ -18,17 +18,15 @@
 
 #include "velox/functions/lib/BitwiseAggregateBase.h"
 
-using namespace facebook::velox::aggregate;
-
-namespace facebook::velox::functions::sparksql::aggregate {
+namespace facebook::velox::functions::sparksql::aggregates {
 
 namespace {
 
 template <typename T>
-class BitwiseXorAggregate : public BitwiseAggregateBase<T> {
+class BitwiseXorAggregate : public aggregate::BitwiseAggregateBase<T> {
  public:
   explicit BitwiseXorAggregate(TypePtr resultType)
-      : BitwiseAggregateBase<T>(
+      : aggregate::BitwiseAggregateBase<T>(
             resultType,
             /* initialValue = */ 0) {}
 
@@ -37,7 +35,7 @@ class BitwiseXorAggregate : public BitwiseAggregateBase<T> {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    SimpleNumericAggregate<T, T, T>::template updateGroups<true>(
+    aggregate::SimpleNumericAggregate<T, T, T>::template updateGroups<true>(
         groups,
         rows,
         args[0],
@@ -50,7 +48,7 @@ class BitwiseXorAggregate : public BitwiseAggregateBase<T> {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
-    SimpleNumericAggregate<T, T, T>::updateOneGroup(
+    aggregate::SimpleNumericAggregate<T, T, T>::updateOneGroup(
         group,
         rows,
         args[0],
@@ -68,7 +66,7 @@ class BitwiseXorAggregate : public BitwiseAggregateBase<T> {
 } // namespace
 
 bool registerBitwiseXorAggregate(const std::string& name) {
-  return registerBitwise<BitwiseXorAggregate>(name);
+  return aggregate::registerBitwise<BitwiseXorAggregate>(name);
 }
 
-} // namespace facebook::velox::functions::sparksql::aggregate
+} // namespace facebook::velox::functions::sparksql::aggregates

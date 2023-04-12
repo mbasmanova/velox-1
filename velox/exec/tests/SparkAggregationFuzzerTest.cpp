@@ -37,7 +37,7 @@ DEFINE_string(
 
 int main(int argc, char** argv) {
   std::string prefix = "spark_";
-  facebook::velox::functions::sparksql::aggregate::registerAggregateFunctions(
+  facebook::velox::functions::sparksql::aggregates::registerAggregateFunctions(
       prefix);
 
   ::testing::InitGoogleTest(&argc, argv);
