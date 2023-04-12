@@ -29,8 +29,9 @@ using namespace facebook::velox::aggregate;
 
 template <typename T>
 struct SimpleAccumulator {
+  // Used by first aggregate function to keep first value, when true will early
+  // return in group by aggregation.
   bool valid_ = false;
-  bool isNumeric = false;
   T value_;
 };
 
@@ -70,8 +71,6 @@ class FirstLastAggregateBase
     if (numeric) {
       for (auto i : indices) {
         new (groups[i] + exec::Aggregate::offset_) TAccumulator<TDataType>();
-        exec::Aggregate::value<TAccumulator<TDataType>>(groups[i])->isNumeric =
-            true;
       }
     } else {
       for (auto i : indices) {
@@ -109,9 +108,6 @@ class FirstLastAggregateBase
         }
       }
     }
-
-    LOG(INFO) << "==== extractValues";
-    LOG(INFO) << result->get()->toString(0, result->get()->size());
   }
 
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
@@ -128,26 +124,6 @@ class FirstLastAggregateBase
       }
     }
   }
-
- protected:
-  //  inline TAccumulator* accumulator() {
-  //    return
-  //  }
-  //  void updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
-  //    exec::Aggregate::clearNull(group);
-  //
-  //    if (numeric) {
-  //      auto value = decoded.valueAt<TNumeric>(i);
-  //      *exec::Aggregate::value<TNumeric>(group) = value;
-  //    } else {
-  //      const auto* indices = decoded.indices();
-  //      const auto* baseVector = decoded.base();
-  //      auto* accumulator =
-  //      exec::Aggregate::value<SingleValueAccumulator>(group);
-  //      accumulator->write(baseVector, indices[i],
-  //      exec::Aggregate::allocator_);
-  //    }
-  //  }
 };
 
 template <bool ignoreNull, typename TDataType, bool numeric>
@@ -166,7 +142,7 @@ class FirstAggregate
     DecodedVector decoded(*args[0], rows);
 
     rows.applyToSelected(
-        [&](vector_size_t i) { return updateValue(i, groups[i], decoded); });
+        [&](vector_size_t i) { updateValue(i, groups[i], decoded); });
   }
 
   void addIntermediateResults(
@@ -182,8 +158,6 @@ class FirstAggregate
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool /* mayPushdown */) override {
-    LOG(INFO) << "==== addSingleGroupRawInput";
-    LOG(INFO) << args[0]->toString(0, args[0]->size());
     DecodedVector decoded(*args[0], rows);
 
     rows.testSelected(
@@ -194,13 +168,8 @@ class FirstAggregate
       char* group,
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
-      bool /* mayPushdown */) override {
-    LOG(INFO) << "==== addSingleGroupIntermediateResults";
-    LOG(INFO) << args[0]->toString(0, args[0]->size());
-    DecodedVector decoded(*args[0], rows);
-
-    rows.testSelected(
-        [&](vector_size_t i) { return updateValue(i, group, decoded); });
+      bool mayPushdown) override {
+    addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
  private:
@@ -282,7 +251,7 @@ class LastAggregate
     DecodedVector decoded(*args[0], rows);
 
     rows.applyToSelected(
-        [&](vector_size_t i) { this->updateValue(i, groups[i], decoded); });
+        [&](vector_size_t i) { updateValue(i, groups[i], decoded); });
   }
 
   void addIntermediateResults(
@@ -301,7 +270,7 @@ class LastAggregate
     DecodedVector decoded(*args[0], rows);
 
     rows.applyToSelected(
-        [&](vector_size_t i) { this->updateValue(i, group, decoded); });
+        [&](vector_size_t i) { updateValue(i, group, decoded); });
   }
 
   void addSingleGroupIntermediateResults(
@@ -314,6 +283,9 @@ class LastAggregate
 
  private:
   void updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
+    if (!numeric) {
+      return updateNonNumeric(i, group, decoded);
+    }
     auto accumulator =
         exec::Aggregate::value<SimpleAccumulator<TDataType>>(group);
     exec::Aggregate::clearNull(group);
@@ -328,6 +300,27 @@ class LastAggregate
     } else if (!decoded.isNullAt(i)) {
       auto value = decoded.valueAt<TDataType>(i);
       accumulator->value_ = value;
+    }
+  }
+
+  void updateNonNumeric(vector_size_t i, char* group, DecodedVector& decoded) {
+    auto accumulator =
+        exec::Aggregate::value<SimpleAccumulator<SingleValueAccumulator>>(
+            group);
+    exec::Aggregate::clearNull(group);
+
+    const auto* indices = decoded.indices();
+    const auto* baseVector = decoded.base();
+    if (!ignoreNull) {
+      if (!decoded.isNullAt(i)) {
+        accumulator->value_.write(
+            baseVector, indices[i], exec::Aggregate::allocator_);
+      } else {
+        exec::Aggregate::setNull(group);
+      }
+    } else if (!decoded.isNullAt(i)) {
+      accumulator->value_.write(
+          baseVector, indices[i], exec::Aggregate::allocator_);
     }
   }
 };
@@ -359,11 +352,11 @@ bool registerFirstLast(const std::string& name) {
                            .build());
 
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                           .typeVariable("T")
-                           .typeVariable("M")
-                           .argumentType("map(T, M)")
-                           .intermediateType("map(T, M)")
-                           .returnType("map(T, M)")
+                           .typeVariable("K")
+                           .typeVariable("V")
+                           .argumentType("map(K, V)")
+                           .intermediateType("map(K, V)")
+                           .returnType("map(K, V)")
                            .build());
 
   return exec::registerAggregateFunction(
@@ -381,23 +374,24 @@ bool registerFirstLast(const std::string& name) {
             return std::make_unique<TClass<ignoreNull, int8_t, true>>(
                 resultType);
           case TypeKind::SMALLINT:
-            //            return std::make_unique<TClass<ignoreNull,
-            //            NumericAccumulator<int16_t>>>(resultType);
+            return std::make_unique<TClass<ignoreNull, int16_t, true>>(
+                resultType);
           case TypeKind::INTEGER:
-            //            return std::make_unique<TClass<ignoreNull,
-            //            int32_t>>(resultType);
+            return std::make_unique<TClass<ignoreNull, int32_t, true>>(
+                resultType);
           case TypeKind::BIGINT:
-            //            return std::make_unique<TClass<ignoreNull,
-            //            int64_t>>(resultType);
+            return std::make_unique<TClass<ignoreNull, int64_t, true>>(
+                resultType);
           case TypeKind::REAL:
-            //            return std::make_unique<TClass<ignoreNull,
-            //            float>>(resultType);
+            return std::make_unique<TClass<ignoreNull, float, true>>(
+                resultType);
           case TypeKind::DOUBLE:
-            //            return std::make_unique<TClass<ignoreNull,
-            //            double>>(resultType);
+            return std::make_unique<TClass<ignoreNull, double, true>>(
+                resultType);
           case TypeKind::VARCHAR:
           case TypeKind::ARRAY:
           case TypeKind::MAP:
+            // int8_t here is a tricky for compile, has no meaning.
             return std::make_unique<TClass<ignoreNull, int8_t, false>>(
                 resultType);
           default:

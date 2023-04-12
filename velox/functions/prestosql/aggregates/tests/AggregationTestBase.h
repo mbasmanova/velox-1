@@ -132,9 +132,8 @@ class AggregationTestBase : public exec::test::OperatorTestBase {
     allowInputShuffle_ = false;
   }
 
-  void disableTestStreaming() {
-    testStreaming_ = false;
-  }
+  /// Whether testStreaming should be called in testAggregations.
+  bool testStreaming_{true};
 
  private:
   void validateStreamingInTestAggregations(
@@ -150,9 +149,6 @@ class AggregationTestBase : public exec::test::OperatorTestBase {
       vector_size_t rawInput2Size);
 
   bool allowInputShuffle_{false};
-
-  /// Whether testStreaming should be called in testAggregations.
-  bool testStreaming_{true};
 };
 
 } // namespace facebook::velox::aggregate::test
