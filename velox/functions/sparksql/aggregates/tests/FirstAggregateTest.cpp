@@ -31,7 +31,6 @@ class FirstAggregateTest : public AggregationTestBase {
   void SetUp() override {
     AggregationTestBase::SetUp();
     aggregates::registerAggregateFunctions("spark_");
-    AggregationTestBase::disableTestStreaming();
   }
 
   template <typename T>
@@ -71,15 +70,21 @@ class FirstAggregateTest : public AggregationTestBase {
         makeNullableFlatVector<T>({std::nullopt, 1, 2, std::nullopt}),
     })};
 
-    // Verify when ignoreNull is true.
-    auto expectedTrue = {makeRowVector({makeNullableFlatVector<T>({1})})};
-    testAggregations(
-        vectors, {}, {"spark_first_ignore_null(c0)"}, expectedTrue);
+    {
+      // Verify when ignoreNull is true.
+      SCOPED_TRACE("ignoreNull=true");
+      auto expectedTrue = {makeRowVector({makeNullableFlatVector<T>({1})})};
+      testAggregations(
+          vectors, {}, {"spark_first_ignore_null(c0)"}, expectedTrue);
+    }
 
-    // Verify when ignoreNull is false.
-    auto expectedFalse = {
-        makeRowVector({makeNullableFlatVector<T>({std::nullopt})})};
-    testAggregations(vectors, {}, {"spark_first(c0)"}, expectedFalse);
+    {
+      // Verify when ignoreNull is false.
+      SCOPED_TRACE("ignoreNull=false");
+      auto expectedFalse = {
+          makeRowVector({makeNullableFlatVector<T>({std::nullopt})})};
+      testAggregations(vectors, {}, {"spark_first(c0)"}, expectedFalse);
+    }
   }
 };
 
