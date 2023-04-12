@@ -29,8 +29,6 @@ using namespace facebook::velox::aggregate;
 
 template <typename T>
 struct SimpleAccumulator {
-  // Used by first aggregate function to keep first value, when true will early
-  // return in group by aggregation.
   bool valid_ = false;
   T value_;
 };
@@ -173,6 +171,8 @@ class FirstAggregate
   }
 
  private:
+  // If we found a valid value, set accumulator valid flags to true, then skip
+  // remaining rows in group.
   bool updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
     if (!numeric) {
       return updateNonNumeric(i, group, decoded);
@@ -201,6 +201,7 @@ class FirstAggregate
       accumulator->valid_ = true;
       return false;
     }
+    exec::Aggregate::setNull(group);
     return true;
   }
 
@@ -224,7 +225,8 @@ class FirstAggregate
       }
       accumulator->valid_ = true;
       return false;
-    } else if (!decoded.isNullAt(i)) {
+    }
+    if (!decoded.isNullAt(i)) {
       accumulator->value_.write(
           baseVector, indices[i], exec::Aggregate::allocator_);
       accumulator->valid_ = true;
@@ -282,6 +284,8 @@ class LastAggregate
   }
 
  private:
+  // Use accumulator valid flags to identify last valid row in group when
+  // ignoreNull is true.
   void updateValue(vector_size_t i, char* group, DecodedVector& decoded) {
     if (!numeric) {
       return updateNonNumeric(i, group, decoded);
@@ -297,9 +301,14 @@ class LastAggregate
       } else {
         exec::Aggregate::setNull(group);
       }
-    } else if (!decoded.isNullAt(i)) {
+      return;
+    }
+    if (!decoded.isNullAt(i)) {
       auto value = decoded.valueAt<TDataType>(i);
       accumulator->value_ = value;
+      accumulator->valid_ = true;
+    } else if (!accumulator->valid_) {
+      exec::Aggregate::setNull(group);
     }
   }
 
@@ -318,10 +327,13 @@ class LastAggregate
       } else {
         exec::Aggregate::setNull(group);
       }
-    } else if (!decoded.isNullAt(i)) {
+      return;
+    }
+    if (!decoded.isNullAt(i)) {
       accumulator->value_.write(
           baseVector, indices[i], exec::Aggregate::allocator_);
-    } else {
+      accumulator->valid_ = true;
+    } else if (!accumulator->valid_) {
       exec::Aggregate::setNull(group);
     }
   }
