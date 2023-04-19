@@ -33,7 +33,12 @@ class SequenceFunction : public exec::VectorFunction {
       const TypePtr& outputType,
       exec::EvalCtx& context,
       VectorPtr& result) const override {
-    VectorPtr localResult = applyNumber(rows, args, outputType, context);
+    VectorPtr localResult;
+    if (args[0]->type() == BIGINT()) {
+      localResult = applyNumber(rows, args, outputType, context);
+    } else {
+      localResult = applyDate(rows, args, outputType, context);
+    }
     context.moveOrCopyResult(localResult, rows, result);
   }
 
@@ -93,6 +98,54 @@ class SequenceFunction : public exec::VectorFunction {
         pool, outputType, nullptr, numRows, offsets, sizes, elements);
   }
 
+  static VectorPtr applyDate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& outputType,
+      exec::EvalCtx& context) {
+    exec::DecodedArgs decodedArgs(rows, args, context);
+    auto startVector = decodedArgs.at(0);
+    auto stopVector = decodedArgs.at(1);
+
+    const auto numRows = rows.end();
+    auto pool = context.pool();
+    vector_size_t numElements = 0;
+
+    BufferPtr sizes = allocateSizes(numRows, pool);
+    BufferPtr offsets = allocateOffsets(numRows, pool);
+    auto rawSizes = sizes->asMutable<vector_size_t>();
+    auto rawOffsets = offsets->asMutable<vector_size_t>();
+
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
+      auto start = startVector->valueAt<Date>(row);
+      auto stop = stopVector->valueAt<Date>(row);
+      const int32_t step = stop >= start ? 1 : -1;
+      rawSizes[row] = checkArguments(start, stop, step);
+      numElements += rawSizes[row];
+    });
+
+    VectorPtr elements = BaseVector::create(DATE(), numElements, pool);
+    auto rawElements = elements->asFlatVector<Date>()->mutableRawValues();
+
+    vector_size_t elementsOffset = 0;
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
+      const auto sequenceCount = rawSizes[row];
+      if (sequenceCount) {
+        rawOffsets[row] = elementsOffset;
+        writeToElements(
+            rawElements + elementsOffset,
+            sequenceCount,
+            startVector,
+            stopVector,
+            row);
+        elementsOffset += rawSizes[row];
+      }
+    });
+
+    return std::make_shared<ArrayVector>(
+        pool, outputType, nullptr, numRows, offsets, sizes, elements);
+  }
+
   static vector_size_t
   checkArguments(int64_t start, int64_t stop, int64_t step) {
     VELOX_USER_CHECK_NE(step, 0, "step must not be zero");
@@ -101,6 +154,16 @@ class SequenceFunction : public exec::VectorFunction {
         "sequence stop value should be greater than or equal to start value if "
         "step is greater than zero otherwise stop should be less than or equal to start")
     auto sequenceCount = (stop - start) / step + 1;
+    VELOX_USER_CHECK_LE(
+        sequenceCount,
+        kMaxResultEntries,
+        "result of sequence function must not have more than 10000 entries");
+    return sequenceCount;
+  }
+
+  static vector_size_t
+  checkArguments(const Date& start, const Date& stop, int32_t step) {
+    auto sequenceCount = (stop.days() - start.days()) / step + 1;
     VELOX_USER_CHECK_LE(
         sequenceCount,
         kMaxResultEntries,
@@ -124,6 +187,20 @@ class SequenceFunction : public exec::VectorFunction {
       elements[i] = start + step * i;
     }
   }
+
+  static void writeToElements(
+      Date* elements,
+      vector_size_t sequenceCount,
+      DecodedVector* startVector,
+      DecodedVector* stopVector,
+      vector_size_t row) {
+    auto start = startVector->valueAt<Date>(row);
+    auto stop = stopVector->valueAt<Date>(row);
+    const int32_t step = stop >= start ? 1 : -1;
+    for (auto i = 0; i < sequenceCount; ++i) {
+      elements[i] = Date(start.days() + step * i);
+    }
+  }
 };
 
 } // namespace
@@ -141,6 +218,11 @@ std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
           .argumentType("bigint")
           .argumentType("bigint")
           .argumentType("bigint")
+          .build(),
+      exec::FunctionSignatureBuilder()
+          .returnType("array(date)")
+          .argumentType("date")
+          .argumentType("date")
           .build()};
   return signatures;
 }
