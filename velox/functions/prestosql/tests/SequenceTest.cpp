@@ -140,10 +140,14 @@ TEST_F(SequenceTest, dateArgumentsExceedMaxEntries) {
       {startVector, stopVector},
       "result of sequence function must not have more than 10000 entries");
 
-  auto expected = makeNullableArrayVector<Date>({
-      {{Date(1991), Date(1992), Date(1993), Date(1994), Date(1995), Date(1996)}},
-      std::nullopt,
-      {{Date(1992)}}
-  });
+  auto expected = makeNullableArrayVector<Date>(
+      {{{Date(1991),
+         Date(1992),
+         Date(1993),
+         Date(1994),
+         Date(1995),
+         Date(1996)}},
+       std::nullopt,
+       {{Date(1992)}}});
   testExpression("try(sequence(C0, C1))", {startVector, stopVector}, expected);
 }
