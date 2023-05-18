@@ -26,47 +26,54 @@ using namespace facebook::velox;
 namespace facebook::velox::row {
 class UnsafeRowSerdeTest : public testing::Test, public test::VectorTestBase {
  public:
-  RowVectorPtr createInputRowWithUnknownType(int32_t batchSize) {
-    auto flatVector = makeAllNullFlatVector<UnknownValue>(batchSize);
-    auto arrayVector = makeAllNullArrayVector(batchSize, UNKNOWN());
-    auto mapVector = makeAllNullMapVector(batchSize, UNKNOWN(), UNKNOWN());
-    auto rowVector = makeRowVector({flatVector, arrayVector, mapVector});
-    return makeRowVector({arrayVector, mapVector, flatVector, rowVector});
-  }
-
-  void testVectorSerde(const RowVectorPtr& inputVector) {
+  void testSerde(const RowVectorPtr& data) {
     std::vector<std::optional<std::string_view>> serializedRows;
-    serializedRows.reserve(inputVector->size());
-    buffers_.reserve(inputVector->size());
-    UnsafeRowFast fast(inputVector);
+    serializedRows.reserve(data->size());
 
-    for (size_t i = 0; i < inputVector->size(); ++i) {
+    std::vector<BufferPtr> buffers;
+    buffers.reserve(data->size());
+
+    auto fixedRowSize = UnsafeRowFast::fixedRowSize(asRowType(data->type()));
+
+    UnsafeRowFast fast(data);
+    for (auto i = 0; i < data->size(); ++i) {
       const auto expectedRowSize = fast.rowSize(i);
-      buffers_.push_back(
+      if (fixedRowSize) {
+        EXPECT_EQ(fixedRowSize.value(), expectedRowSize);
+      }
+
+      buffers.push_back(
           AlignedBuffer::allocate<char>(expectedRowSize, pool_.get()));
 
-      // Serialize rowVector into bytes.
-      const auto rowSize = fast.serialize(i, buffers_[i]->asMutable<char>());
+      const auto rowSize = fast.serialize(i, buffers[i]->asMutable<char>());
 
       EXPECT_EQ(expectedRowSize, rowSize);
 
       serializedRows.push_back(
-          std::string_view(buffers_[i]->asMutable<char>(), rowSize));
+          std::string_view(buffers[i]->asMutable<char>(), rowSize));
     }
-    const auto outputVector = UnsafeRowDeserializer::deserialize(
-        serializedRows, inputVector->type(), pool());
-    test::assertEqualVectors(inputVector, outputVector);
-  }
 
- private:
-  std::vector<BufferPtr> buffers_{};
+    const auto copy = UnsafeRowDeserializer::deserialize(
+        serializedRows, data->type(), pool());
+    test::assertEqualVectors(data, copy);
+  }
 };
 
-TEST_F(UnsafeRowSerdeTest, unknownRows) {
-  for (int32_t batchSize : {1, 5, 10}) {
-    const auto& inputVector = createInputRowWithUnknownType(batchSize);
-    testVectorSerde(inputVector);
-  }
+TEST_F(UnsafeRowSerdeTest, unknown) {
+  const vector_size_t batchSize = 10;
+  auto flatVector = makeAllNullFlatVector<UnknownValue>(batchSize);
+  testSerde(makeRowVector({flatVector}));
+
+  auto arrayVector = makeAllNullArrayVector(batchSize, UNKNOWN());
+  testSerde(makeRowVector({arrayVector}));
+
+  auto mapVector = makeAllNullMapVector(batchSize, UNKNOWN(), UNKNOWN());
+  testSerde(makeRowVector({mapVector}));
+
+  auto rowVector = makeRowVector({flatVector, arrayVector, mapVector});
+  testSerde(makeRowVector({rowVector}));
+
+  testSerde(makeRowVector({arrayVector, mapVector, flatVector, rowVector}));
 }
 
 } // namespace facebook::velox::row
