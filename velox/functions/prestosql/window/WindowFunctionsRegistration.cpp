@@ -29,6 +29,7 @@ extern void registerNtile(const std::string& name);
 extern void registerFirstValue(const std::string& name);
 extern void registerLastValue(const std::string& name);
 extern void registerLag(const std::string& name);
+extern void registerLead(const std::string& name);
 
 void registerAllWindowFunctions(const std::string& prefix) {
   registerRowNumber(prefix + "row_number");
@@ -41,6 +42,7 @@ void registerAllWindowFunctions(const std::string& prefix) {
   registerFirstValue(prefix + "first_value");
   registerLastValue(prefix + "last_value");
   registerLag(prefix + "lag");
+  registerLead(prefix + "lead");
 }
 
 } // namespace prestosql

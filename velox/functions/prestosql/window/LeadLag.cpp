@@ -21,9 +21,10 @@ namespace facebook::velox::window::prestosql {
 
 namespace {
 
-class LagFunction : public exec::WindowFunction {
+template <bool isLag>
+class LeadLagFunction : public exec::WindowFunction {
  public:
-  explicit LagFunction(
+  explicit LeadLagFunction(
       const std::vector<exec::WindowFunctionArg>& args,
       const TypePtr& resultType,
       velox::memory::MemoryPool* pool)
@@ -107,35 +108,14 @@ class LagFunction : public exec::WindowFunction {
     }
   }
 
-  void setRowNumbersForConstantOffset() {
-    if (isConstantOffsetNull_) {
-      std::fill(rowNumbers_.begin(), rowNumbers_.end(), kNullRow);
-      return;
-    }
-
-    auto constantOffsetValue = constantOffset_.value();
-
-    // Figure out how many rows at the start should be NULL.
-    vector_size_t nullCnt = 0;
-    if (constantOffsetValue > partitionOffset_) {
-      nullCnt = std::min<vector_size_t>(
-          constantOffsetValue - partitionOffset_, rowNumbers_.size());
-      if (nullCnt) {
-        std::fill(rowNumbers_.begin(), rowNumbers_.begin() + nullCnt, kNullRow);
-      }
-    }
-
-    // Populate sequential values for non-NULL rows.
-    std::iota(
-        rowNumbers_.begin() + nullCnt,
-        rowNumbers_.end(),
-        partitionOffset_ + nullCnt - constantOffsetValue);
-  }
+  void setRowNumbersForConstantOffset();
 
   void setRowNumbers(vector_size_t numRows) {
     offsets_->resize(numRows);
     partition_->extractColumn(
         offsetIndex_, partitionOffset_, numRows, 0, offsets_);
+
+    const auto maxRowNumber = partition_->numRows() - 1;
 
     for (auto i = 0; i < numRows; ++i) {
       if (offsets_->isNullAt(i)) {
@@ -144,8 +124,13 @@ class LagFunction : public exec::WindowFunction {
         vector_size_t offset = offsets_->valueAt(i);
         VELOX_USER_CHECK_GE(offset, 0, "Offset must be at least 0");
 
-        auto rowNumber = partitionOffset_ + i - offset;
-        rowNumbers_[i] = rowNumber >= 0 ? rowNumber : kNullRow;
+        if constexpr (isLag) {
+          auto rowNumber = partitionOffset_ + i - offset;
+          rowNumbers_[i] = rowNumber >= 0 ? rowNumber : kNullRow;
+        } else {
+          auto rowNumber = partitionOffset_ + i + offset;
+          rowNumbers_[i] = rowNumber <= maxRowNumber ? rowNumber : kNullRow;
+        }
       }
     }
   }
@@ -230,10 +215,63 @@ class LagFunction : public exec::WindowFunction {
   // vector across getOutput calls.
   std::vector<vector_size_t> rowNumbers_;
 };
-} // namespace
 
-void registerLag(const std::string& name) {
-  std::vector<exec::FunctionSignaturePtr> signatures{
+template <>
+void LeadLagFunction<true>::setRowNumbersForConstantOffset() {
+  if (isConstantOffsetNull_) {
+    std::fill(rowNumbers_.begin(), rowNumbers_.end(), kNullRow);
+    return;
+  }
+
+  auto constantOffsetValue = constantOffset_.value();
+
+  // Figure out how many rows at the start should be NULL.
+  vector_size_t nullCnt = 0;
+  if (constantOffsetValue > partitionOffset_) {
+    nullCnt = std::min<vector_size_t>(
+        constantOffsetValue - partitionOffset_, rowNumbers_.size());
+    if (nullCnt) {
+      std::fill(rowNumbers_.begin(), rowNumbers_.begin() + nullCnt, kNullRow);
+    }
+  }
+
+  // Populate sequential values for non-NULL rows.
+  std::iota(
+      rowNumbers_.begin() + nullCnt,
+      rowNumbers_.end(),
+      partitionOffset_ + nullCnt - constantOffsetValue);
+}
+
+template <>
+void LeadLagFunction<false>::setRowNumbersForConstantOffset() {
+  if (isConstantOffsetNull_) {
+    std::fill(rowNumbers_.begin(), rowNumbers_.end(), kNullRow);
+    return;
+  }
+
+  auto constantOffsetValue = constantOffset_.value();
+
+  // Figure out how many rows at the end should be NULL.
+  vector_size_t nonNullCnt = std::max<vector_size_t>(
+      0,
+      std::min<vector_size_t>(
+          rowNumbers_.size(),
+          partition_->numRows() - partitionOffset_ - constantOffsetValue));
+  if (nonNullCnt < rowNumbers_.size()) {
+    std::fill(rowNumbers_.begin() + nonNullCnt, rowNumbers_.end(), kNullRow);
+  }
+
+  // Populate sequential values for non-NULL rows.
+  if (nonNullCnt > 0) {
+    std::iota(
+        rowNumbers_.begin(),
+        rowNumbers_.begin() + nonNullCnt,
+        partitionOffset_ + constantOffsetValue);
+  }
+}
+
+std::vector<exec::FunctionSignaturePtr> signatures() {
+  return {
       // T -> T.
       exec::FunctionSignatureBuilder()
           .typeVariable("T")
@@ -256,17 +294,35 @@ void registerLag(const std::string& name) {
           .argumentType("T")
           .build(),
   };
+}
 
+} // namespace
+
+void registerLag(const std::string& name) {
   exec::registerWindowFunction(
       name,
-      std::move(signatures),
+      signatures(),
       [name](
           const std::vector<exec::WindowFunctionArg>& args,
           const TypePtr& resultType,
           velox::memory::MemoryPool* pool,
           HashStringAllocator* /*stringAllocator*/)
           -> std::unique_ptr<exec::WindowFunction> {
-        return std::make_unique<LagFunction>(args, resultType, pool);
+        return std::make_unique<LeadLagFunction<true>>(args, resultType, pool);
+      });
+}
+
+void registerLead(const std::string& name) {
+  exec::registerWindowFunction(
+      name,
+      signatures(),
+      [name](
+          const std::vector<exec::WindowFunctionArg>& args,
+          const TypePtr& resultType,
+          velox::memory::MemoryPool* pool,
+          HashStringAllocator* /*stringAllocator*/)
+          -> std::unique_ptr<exec::WindowFunction> {
+        return std::make_unique<LeadLagFunction<false>>(args, resultType, pool);
       });
 }
 } // namespace facebook::velox::window::prestosql
