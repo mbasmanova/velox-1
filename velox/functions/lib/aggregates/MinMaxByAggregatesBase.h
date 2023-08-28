@@ -624,6 +624,8 @@ std::unique_ptr<exec::Aggregate> create(
       return create<Aggregate, isMaxFunc, Comparator, double>(
           resultType, compareType, errorMessage);
     case TypeKind::VARCHAR:
+      FOLLY_FALLTHROUGH;
+    case TypeKind::VARBINARY:
       return create<Aggregate, isMaxFunc, Comparator, StringView>(
           resultType, compareType, errorMessage);
     case TypeKind::TIMESTAMP:

@@ -291,9 +291,14 @@ exec::AggregateRegistrationResult registerArbitrary(const std::string& name) {
             return std::make_unique<ArbitraryAggregate<double>>(inputType);
           case TypeKind::TIMESTAMP:
             return std::make_unique<ArbitraryAggregate<Timestamp>>(inputType);
+          case TypeKind::VARBINARY:
+            FOLLY_FALLTHROUGH;
           case TypeKind::VARCHAR:
+            FOLLY_FALLTHROUGH;
           case TypeKind::ARRAY:
+            FOLLY_FALLTHROUGH;
           case TypeKind::MAP:
+            FOLLY_FALLTHROUGH;
           case TypeKind::ROW:
             return std::make_unique<NonNumericArbitrary>(inputType);
           default:
