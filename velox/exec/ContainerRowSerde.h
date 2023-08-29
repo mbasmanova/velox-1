@@ -38,6 +38,12 @@ class ContainerRowSerde {
       vector_size_t index,
       CompareFlags flags);
 
+  static std::optional<int32_t> compareWithNulls(
+      ByteStream& left,
+      const DecodedVector& right,
+      vector_size_t index,
+      CompareFlags flags);
+
   static int32_t compare(
       ByteStream& left,
       ByteStream& right,

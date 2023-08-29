@@ -144,5 +144,10 @@ TEST_F(ContainerRowSerdeTest, nested) {
   testRoundTrip(nestedArray);
 }
 
+TEST_F(ContainerRowSerdeTest, a) {
+  std::optional<std::optional<int>> x = std::make_optional<std::optional<int>>(std::nullopt);
+  ASSERT_TRUE(x.has_value());
+}
+
 } // namespace
 } // namespace facebook::velox::exec

@@ -443,6 +443,11 @@ class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool /*mayPushdown*/) override {
+
+    // ARRAY comparison not supported for arrays with null elements
+    // ROW comparison not supported for fields with null elements
+    // MAP comparison not supported for null value elements
+
     doUpdateSingleGroup(group, rows, args[0], [](int32_t compareResult) {
       return compareResult < 0;
     });
@@ -891,8 +896,7 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
           const TypePtr& resultType,
           const core::QueryConfig& /*config*/)
           -> std::unique_ptr<exec::Aggregate> {
-        const bool nAgg = (argTypes.size() == 2) ||
-            (argTypes.size() == 1 && argTypes[0]->size() == 2);
+        const bool nAgg = !resultType->equivalent(*argTypes[0]);
 
         if (nAgg) {
           // We have either 2 arguments: T, bigint (partial aggregation)

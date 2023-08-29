@@ -573,11 +573,20 @@ std::unique_ptr<exec::Aggregate> create(
     case TypeKind::DOUBLE:
       return std::make_unique<Aggregate<W, double, isMaxFunc, Comparator>>(
           resultType);
+    case TypeKind::VARBINARY:
+      FOLLY_FALLTHROUGH;
     case TypeKind::VARCHAR:
       return std::make_unique<Aggregate<W, StringView, isMaxFunc, Comparator>>(
           resultType);
     case TypeKind::TIMESTAMP:
       return std::make_unique<Aggregate<W, Timestamp, isMaxFunc, Comparator>>(
+          resultType);
+    case TypeKind::ARRAY:
+      FOLLY_FALLTHROUGH;
+    case TypeKind::MAP:
+      FOLLY_FALLTHROUGH;
+    case TypeKind::ROW:
+      return std::make_unique<Aggregate<W, ComplexType, isMaxFunc, Comparator>>(
           resultType);
     default:
       VELOX_FAIL("{}", errorMessage);

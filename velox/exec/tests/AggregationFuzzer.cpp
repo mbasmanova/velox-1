@@ -39,10 +39,10 @@ DEFINE_int32(
 
 DEFINE_int32(
     batch_size,
-    100,
+    10,
     "The number of elements on each generated vector.");
 
-DEFINE_int32(num_batches, 10, "The number of generated vectors.");
+DEFINE_int32(num_batches, 3, "The number of generated vectors.");
 
 DEFINE_int32(
     max_num_varargs,

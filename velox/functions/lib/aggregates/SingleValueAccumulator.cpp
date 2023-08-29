@@ -54,10 +54,19 @@ int32_t SingleValueAccumulator::compare(
     vector_size_t index) const {
   VELOX_CHECK_NOT_NULL(start_.header);
 
+  static const CompareFlags kCompareFlags{
+      true, // nullsFirst
+      true, // ascending
+      false, // equalsOnly
+      CompareFlags::NullHandlingMode::StopAtNull};
+
   ByteStream stream;
   HashStringAllocator::prepareRead(start_.header, stream);
-  return exec::ContainerRowSerde::compare(
-      stream, decoded, index, {true, true, false});
+  auto result = exec::ContainerRowSerde::compareWithNulls(
+      stream, decoded, index, kCompareFlags);
+
+  VELOX_USER_CHECK(result.has_value());
+  return result.value();
 }
 
 void SingleValueAccumulator::destroy(HashStringAllocator* allocator) {

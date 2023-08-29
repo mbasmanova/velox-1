@@ -292,6 +292,10 @@ TypedExprPtr Expressions::resolveLambdaExpr(
   auto names = lambdaExpr->inputNames();
   auto body = lambdaExpr->body();
 
+  if (names.size() != lambdaInputTypes.size()) {
+    LOG(ERROR) << lambdaExpr->toString();
+    LOG(ERROR) << inputRow->toString();
+  }
   VELOX_CHECK_LE(names.size(), lambdaInputTypes.size());
   std::vector<TypePtr> types;
   for (auto i = 0; i < names.size(); ++i) {

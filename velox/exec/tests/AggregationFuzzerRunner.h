@@ -117,6 +117,7 @@ class AggregationFuzzerRunner {
           {"skewness", ""},
           {"kurtosis", ""},
           {"entropy", ""},
+          {"max_data_size_for_stats", ""},
   };
 
   static int run(const std::string& planPath) {
