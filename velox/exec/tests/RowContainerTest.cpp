@@ -278,50 +278,99 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     return rowContainer;
   }
 
-  /// Helper function for the floating point comparison tests.
-  /// Reorders the initialOrder vector depending on the
-  /// requested ordering options (ascending vs descending)
-  /// and whether or not nulls are first.
-  /// The inital order vector is ordered in ascending order of
-  /// vector elements and, if needed, reordered.
+  // Count number of nulls at the start of the list.
   template <typename T>
-  void setupFloatTestExpectedOutput(
-      T& initialOrder,
+  static size_t countLeadingNulls(std::vector<std::optional<T>>& values) {
+    int32_t numNulls = 0;
+    for (auto i = 0; i < values.size(); ++i) {
+      if (!values[i].has_value()) {
+        ++numNulls;
+      } else {
+        break;
+      }
+    }
+
+    return numNulls;
+  }
+
+  // Given a list of values sorted in ascending order with nulls first re-orders
+  // the elements to reverse the order and / or pu nulls last.
+  template <typename T>
+  void changeSortingOrder(
+      std::vector<std::optional<T>>& values,
       bool ascending,
       bool nullsFirst) {
-    if (!ascending) {
+    if (ascending) {
       if (nullsFirst) {
-        std::reverse(initialOrder.begin() + 1, initialOrder.end());
+        // Nothing to do. 'values' are expected to be already sorted in
+        // ascending order with nulls first.
       } else {
-        std::reverse(initialOrder.begin(), initialOrder.end());
+        // Move the nulls from the start of the list to the end of the list.
+        const auto numNulls = countLeadingNulls(values);
+        for (auto i = 0; i < values.size() - numNulls; ++i) {
+          values[i] = values[i + numNulls];
+        }
+
+        for (auto i = values.size() - numNulls; i < values.size(); ++i) {
+          values[i].reset();
+        }
       }
     } else {
-      if (!nullsFirst) {
-        for (int i = 0; i < initialOrder.size() - 1; ++i) {
-          initialOrder[i] = initialOrder[i + 1];
-        }
-        initialOrder[initialOrder.size() - 1] = std::nullopt;
+      if (nullsFirst) {
+        // Keeps nulls at the start of the list. Reverse the order of remaining
+        // non-null elements.
+        const auto numNulls = countLeadingNulls(values);
+        std::reverse(values.begin() + numNulls, values.end());
+      } else {
+        // Reverse the order of all elements.
+        std::reverse(values.begin(), values.end());
       }
     }
   }
 
-  template <typename T>
-  VectorPtr createResultVectorForSimpleComparison(
-      const std::vector<std::pair<vector_size_t, char*>>& indexedRows,
-      const DecodedVector& decoded) {
-    std::vector<std::optional<T>> sorted;
-    for (const auto& irow : indexedRows) {
-      if (decoded.isNullAt(irow.first)) {
-        sorted.push_back(std::nullopt);
-      } else {
-        sorted.push_back(decoded.valueAt<T>(irow.first));
-      }
+  // A list of rows with unique zero-based indices.
+  using IndexedRows = std::vector<std::pair<vector_size_t, char*>>;
+
+  static std::vector<char*> store(
+      DecodedVector& decoded,
+      vector_size_t numRows,
+      RowContainer& rowContainer) {
+    std::vector<char*> rows(numRows);
+    for (size_t i = 0; i < numRows; ++i) {
+      rows[i] = rowContainer.newRow();
+      rowContainer.store(decoded, i, rows[i], 0);
     }
-    return makeNullableFlatVector<T>(sorted);
+
+    return rows;
+  }
+
+  static IndexedRows indexRows(const std::vector<char*>& rows) {
+    IndexedRows indexedRows;
+    indexedRows.reserve(rows.size());
+    for (auto i = 0; i < rows.size(); ++i) {
+      indexedRows.push_back({i, rows[i]});
+    }
+    return indexedRows;
+  }
+
+  template <typename T>
+  void testCompareSimpleFloats(const TypePtr& type) {
+    // Verify ascending order.
+    testCompareSimpleFloats<float>(REAL(), true, true);
+    testCompareSimpleFloats<float>(REAL(), true, false);
+    // Verify descending order.
+    testCompareSimpleFloats<float>(REAL(), false, true);
+    testCompareSimpleFloats<float>(REAL(), false, false);
   }
 
   template <typename T>
   void testCompareSimpleFloats(TypePtr type, bool ascending, bool nullsFirst) {
+    SCOPED_TRACE(fmt::format(
+        "{}, ascending = {}, nullsFirst = {}",
+        type->toString(),
+        ascending,
+        nullsFirst));
+
     // NOTE: set 'isJoinBuild' to true to enable nullable sort key in test.
     auto rowContainer = makeRowContainer({type}, {type}, false);
     auto lowest = std::numeric_limits<T>::lowest();
@@ -333,21 +382,13 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     VectorPtr values = makeNullableFlatVector<T>(
         {std::nullopt, max, inf, 0.0, nan, lowest, min});
     int numRows = values->size();
-
-    SelectivityVector allRows(numRows);
-    DecodedVector decoded(*values, allRows);
-    std::vector<char*> rows(numRows);
-    std::vector<std::pair<vector_size_t, char*>> indexedRows(numRows);
-    for (size_t i = 0; i < numRows; ++i) {
-      rows[i] = rowContainer->newRow();
-      rowContainer->store(decoded, i, rows[i], 0);
-      indexedRows[i] = std::make_pair(i, rows[i]);
-    }
+    DecodedVector decoded(*values);
+    auto rows = store(decoded, numRows, *rowContainer);
+    auto indexedRows = indexRows(rows);
 
     std::vector<std::optional<T>> expectedOrder = {
         std::nullopt, lowest, 0.0, min, max, inf, nan};
-    setupFloatTestExpectedOutput<std::vector<std::optional<T>>>(
-        expectedOrder, ascending, nullsFirst);
+    changeSortingOrder(expectedOrder, ascending, nullsFirst);
     VectorPtr expected = makeNullableFlatVector<T>(expectedOrder);
 
     // Verify compare method with two rows as input
@@ -373,8 +414,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
                        r.first,
                        {nullsFirst, ascending}) < 0;
           });
-      auto result =
-          createResultVectorForSimpleComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -387,8 +427,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
             return rowContainer->compareRows(
                        l.second, r.second, {{nullsFirst, ascending}}) < 0;
           });
-      auto result =
-          createResultVectorForSimpleComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -400,32 +439,20 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
           [&](const std::pair<int, char*>& l, const std::pair<int, char*>& r) {
             return rowContainer->compareRows(l.second, r.second) < 0;
           });
-      auto result =
-          createResultVectorForSimpleComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
   }
 
-  template <typename T>
-  VectorPtr createResultVectorForArrayComparison(
-      const std::vector<std::pair<vector_size_t, char*>>& indexedRows,
-      const DecodedVector& decoded) {
-    std::vector<std::optional<std::vector<std::optional<T>>>> sorted;
-    for (const auto& irow : indexedRows) {
-      if (decoded.isNullAt(irow.first)) {
-        sorted.push_back(std::nullopt);
-      } else {
-        exec::VectorReader<Array<T>> reader(&decoded);
-        auto arrayView = reader[irow.first];
-        auto arrayEntry = arrayView[0];
-        if (!arrayEntry.has_value()) {
-          sorted.push_back({{{std::nullopt}}});
-        } else {
-          sorted.push_back({{{arrayEntry.value()}}});
-        }
-      }
+  VectorPtr copyValues(
+      const IndexedRows& indexedRows,
+      const VectorPtr& values) {
+    const auto numRows = indexedRows.size();
+    auto copy = BaseVector::create(values->type(), numRows, pool());
+    for (auto i = 0; i < numRows; ++i) {
+      copy->copy(values.get(), i, indexedRows[i].first, 1);
     }
-    return makeNullableArrayVector(sorted);
+    return copy;
   }
 
   template <typename T>
@@ -447,17 +474,11 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
          {{nan}},
          {{lowest}},
          {{min}}});
-    int numRows = values->size();
 
-    SelectivityVector allRows(numRows);
-    DecodedVector decoded(*values, allRows);
-    std::vector<char*> rows(numRows);
-    std::vector<std::pair<vector_size_t, char*>> indexedRows(numRows);
-    for (size_t i = 0; i < numRows; ++i) {
-      rows[i] = rowContainer->newRow();
-      rowContainer->store(decoded, i, rows[i], 0);
-      indexedRows[i] = std::make_pair(i, rows[i]);
-    }
+    int numRows = values->size();
+    DecodedVector decoded(*values);
+    auto rows = store(decoded, numRows, *rowContainer);
+    auto indexedRows = indexRows(rows);
 
     std::vector<std::optional<std::vector<std::optional<T>>>> expectedOrder = {
         std::nullopt,
@@ -468,21 +489,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
         {{max}},
         {{inf}},
         {{nan}}};
-    if (!ascending) {
-      if (nullsFirst) {
-        std::reverse(expectedOrder.begin() + 2, expectedOrder.end());
-      } else {
-        std::reverse(expectedOrder.begin(), expectedOrder.end());
-      }
-    } else {
-      if (!nullsFirst) {
-        for (int i = 0; i < expectedOrder.size() - 2; ++i) {
-          expectedOrder[i] = expectedOrder[i + 2];
-        }
-        expectedOrder[expectedOrder.size() - 1] = std::nullopt;
-        expectedOrder[expectedOrder.size() - 2] = {{{std::nullopt}}};
-      }
-    }
+    changeSortingOrder(expectedOrder, ascending, nullsFirst);
     VectorPtr expected = makeNullableArrayVector(expectedOrder);
 
     // Verify compare method with two rows as input
@@ -508,8 +515,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
                        r.first,
                        {nullsFirst, ascending}) < 0;
           });
-      auto result =
-          createResultVectorForArrayComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -522,8 +528,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
             return rowContainer->compareRows(
                        l.second, r.second, {{nullsFirst, ascending}}) < 0;
           });
-      auto result =
-          createResultVectorForArrayComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -535,30 +540,9 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
           [&](const std::pair<int, char*>& l, const std::pair<int, char*>& r) {
             return rowContainer->compareRows(l.second, r.second) < 0;
           });
-      auto result =
-          createResultVectorForArrayComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
-  }
-
-  template <typename T>
-  VectorPtr createResultVectorForMapComparison(
-      const std::vector<std::pair<vector_size_t, char*>>& indexedRows,
-      const DecodedVector& decoded) {
-    std::vector<
-        std::optional<std::vector<std::pair<T, std::optional<int32_t>>>>>
-        sorted;
-    for (const auto& irow : indexedRows) {
-      if (decoded.isNullAt(irow.first)) {
-        sorted.push_back(std::nullopt);
-      } else {
-        exec::VectorReader<Map<T, int32_t>> reader(&decoded);
-        auto mapView = reader[irow.first];
-        sorted.push_back(
-            {{{mapView.atIndex(0).first, mapView.atIndex(0).second}}});
-      }
-    }
-    return makeNullableMapVector(sorted);
   }
 
   template <typename T>
@@ -579,17 +563,11 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
          {{{nan, 4}}},
          {{{lowest, 5}}},
          {{{min, 6}}}});
-    int numRows = values->size();
 
-    SelectivityVector allRows(numRows);
-    DecodedVector decoded(*values, allRows);
-    std::vector<char*> rows(numRows);
-    std::vector<std::pair<vector_size_t, char*>> indexedRows(numRows);
-    for (size_t i = 0; i < numRows; ++i) {
-      rows[i] = rowContainer->newRow();
-      rowContainer->store(decoded, i, rows[i], 0);
-      indexedRows[i] = std::make_pair(i, rows[i]);
-    }
+    int numRows = values->size();
+    DecodedVector decoded(*values);
+    auto rows = store(decoded, numRows, *rowContainer);
+    auto indexedRows = indexRows(rows);
 
     std::vector<
         std::optional<std::vector<std::pair<T, std::optional<int32_t>>>>>
@@ -601,9 +579,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
             {{{max, 1}}},
             {{{inf, 2}}},
             {{{nan, 4}}}};
-    setupFloatTestExpectedOutput<std::vector<
-        std::optional<std::vector<std::pair<T, std::optional<int32_t>>>>>>(
-        expectedOrder, ascending, nullsFirst);
+    changeSortingOrder(expectedOrder, ascending, nullsFirst);
     VectorPtr expected = makeNullableMapVector<T, int32_t>(expectedOrder);
 
     // Verify compare method with two rows as input
@@ -629,7 +605,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
                        r.first,
                        {nullsFirst, ascending}) < 0;
           });
-      auto result = createResultVectorForMapComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -642,7 +618,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
             return rowContainer->compareRows(
                        l.second, r.second, {{nullsFirst, ascending}}) < 0;
           });
-      auto result = createResultVectorForMapComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
 
@@ -654,14 +630,14 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
           [&](const std::pair<int, char*>& l, const std::pair<int, char*>& r) {
             return rowContainer->compareRows(l.second, r.second) < 0;
           });
-      auto result = createResultVectorForMapComparison<T>(indexedRows, decoded);
+      auto result = copyValues(indexedRows, values);
       assertEqualVectors(expected, result);
     }
   }
 
   template <typename T>
   VectorPtr createResultVectorForRowComparison(
-      const std::vector<std::pair<vector_size_t, char*>>& indexedRows,
+      const IndexedRows& indexedRows,
       const DecodedVector& decoded) {
     std::vector<std::optional<T>> sorted;
     for (const auto& irow : indexedRows) {
@@ -693,7 +669,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
     SelectivityVector allRows(numRows);
     DecodedVector decoded(*values, allRows);
     std::vector<char*> rows(numRows);
-    std::vector<std::pair<vector_size_t, char*>> indexedRows(numRows);
+    IndexedRows indexedRows(numRows);
     for (size_t i = 0; i < numRows; ++i) {
       rows[i] = rowContainer->newRow();
       rowContainer->store(decoded, i, rows[i], 0);
@@ -702,8 +678,7 @@ class RowContainerTest : public exec::test::RowContainerTestBase {
 
     std::vector<std::optional<T>> expectedOrder = {
         std::nullopt, lowest, 0.0, min, max, inf, nan};
-    setupFloatTestExpectedOutput<std::vector<std::optional<T>>>(
-        expectedOrder, ascending, nullsFirst);
+    changeSortingOrder(expectedOrder, ascending, nullsFirst);
     VectorPtr expected =
         makeRowVector({makeNullableFlatVector<T>(expectedOrder)});
 
@@ -1304,22 +1279,12 @@ TEST_F(RowContainerTest, alignment) {
 
 // Verify comparison of fringe float values
 TEST_F(RowContainerTest, compareFloat) {
-  // Verify ascending order
-  testCompareSimpleFloats<float>(REAL(), true, true);
-  testCompareSimpleFloats<float>(REAL(), true, false);
-  //  Verify descending order
-  testCompareSimpleFloats<float>(REAL(), false, true);
-  testCompareSimpleFloats<float>(REAL(), false, false);
+  testCompareSimpleFloats<float>(REAL());
 }
 
 // Verify comparison of fringe double values
 TEST_F(RowContainerTest, compareDouble) {
-  // Verify ascending order
-  testCompareSimpleFloats<double>(DOUBLE(), true, true);
-  testCompareSimpleFloats<double>(DOUBLE(), true, false);
-  // Verify descending order
-  testCompareSimpleFloats<double>(DOUBLE(), false, true);
-  testCompareSimpleFloats<double>(DOUBLE(), false, false);
+  testCompareSimpleFloats<double>(DOUBLE());
 }
 
 TEST_F(RowContainerTest, compareArrayTypeFloat) {
