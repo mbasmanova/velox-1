@@ -216,10 +216,39 @@ Array Functions
     Throws if the first matching element is NULL to avoid ambiguous results
     for no-match and first-match-is-null cases.
 
+.. function:: find_first(array(T), index, function(T,boolean)) -> E
+
+    Returns the first element of ``array`` that matches the predicate.
+    Returns ``NULL`` if no element matches the predicate.
+    Throws if the first matching element is NULL to avoid ambiguous results
+    for no-match and first-match-is-null cases.
+    If ``index`` > 0, the search for element starts at position ``index``
+    until the end of the array.
+    If ``index`` < 0, the search for element starts at position ``abs(index)``
+    counting from the end of the array, until the start of the array. ::
+
+        SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x > 0); -- 4
+        SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 0); -- 5
+        SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x < 4); -- NULL
+        SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 5); -- NULL
+
 .. function:: find_first_index(array(T), function(T,boolean)) -> BIGINT
 
     Returns the 1-based index of the first element of ``array`` that matches the predicate.
     Returns ``NULL`` if no such element exists.
+
+.. function:: find_first_index(array(T), index, function(T,boolean)) -> BIGINT
+
+    Returns the 1-based index of the first element of ``array`` that matches the predicate.
+    Returns ``NULL`` if no such element exists.
+    If ``index`` > 0, the search for element starts at position ``index`` until the end of the array.
+    If ``index`` < 0, the search for element starts at position ``abs(index)`` counting from
+    the end of the array, until the start of the array. ::
+
+        SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x > 0); -- 2
+        SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 0); -- 3
+        SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x < 4); -- NULL
+        SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 5); -- NULL
 
 .. function:: flatten(array(array(T))) -> array(T)
 

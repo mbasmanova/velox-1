@@ -21,6 +21,15 @@ namespace {
 
 class FindFirstTest : public functions::test::FunctionBaseTest {
  protected:
+  void verify(
+      const std::string& expression,
+      const RowVectorPtr& input,
+      const VectorPtr& expected) {
+    SCOPED_TRACE(expression);
+    auto result = evaluate(expression, input);
+    velox::test::assertEqualVectors(expected, result);
+  }
+
   void findFirst(
       const VectorPtr& input,
       const std::string& lambda,
@@ -92,57 +101,109 @@ class FindFirstTest : public functions::test::FunctionBaseTest {
 
 TEST_F(FindFirstTest, basic) {
   auto data = makeArrayVectorFromJson<int32_t>({
+      "[1, 2, 3, 4]",
       "null",
-      "[1, 2, 3]",
-      "[-1, 0, 1, 3, 2]",
-      "[10, 11, 12]",
-      "[-5, -4, -3, 0]",
-      "[null, 1, null, 2, null, 3]",
-      "[null, null, null]",
+      "[]",
+      "[null, 10, 20, null, 30, null, 40]",
   });
 
-  VectorPtr expected = makeNullableFlatVector<int32_t>({
-      std::nullopt,
-      2,
-      3,
-      10,
-      std::nullopt,
-      2,
-      std::nullopt,
-  });
+  // find_first: x > 0.
+  VectorPtr expected =
+      makeNullableFlatVector<int32_t>({1, std::nullopt, std::nullopt, 10});
+  verify("find_first(c0, x -> (x > 0))", makeRowVector({data}), expected);
 
-  findFirst(data, "x > 1", expected);
-  findFirstFails(data, "x is null", "find_first found NULL as the first match");
+  expected =
+      makeNullableFlatVector<int64_t>({1, std::nullopt, std::nullopt, 2});
+  verify("find_first_index(c0, x -> (x > 0))", makeRowVector({data}), expected);
 
-  expected = makeNullableFlatVector<int64_t>({
-      std::nullopt,
-      2,
-      4,
-      1,
-      std::nullopt,
-      4,
-      std::nullopt,
-  });
-  findFirstIndex(data, "x > 1", expected);
+  // find_first: x > 10.
+  expected = makeNullableFlatVector<int32_t>(
+      {std::nullopt, std::nullopt, std::nullopt, 20});
+  verify("find_first(c0, x -> (x > 10))", makeRowVector({data}), expected);
 
-  expected = makeNullableFlatVector<int64_t>({
-      std::nullopt,
-      std::nullopt,
-      std::nullopt,
-      std::nullopt,
-      std::nullopt,
-      1,
-      1,
-  });
-  findFirstIndex(data, "x is null", expected);
+  expected = makeNullableFlatVector<int64_t>(
+      {std::nullopt, std::nullopt, std::nullopt, 3});
+  verify(
+      "find_first_index(c0, x -> (x > 10))", makeRowVector({data}), expected);
+
+  // find_first: x < 0.
+  expected = makeNullConstant(TypeKind::INTEGER, 4);
+  verify("find_first(c0, x -> (x < 0))", makeRowVector({data}), expected);
+
+  expected = makeNullConstant(TypeKind::BIGINT, 4);
+  verify("find_first_index(c0, x -> (x < 0))", makeRowVector({data}), expected);
+
+  // find_first x > 2 starting with 2nd element.
+  expected =
+      makeNullableFlatVector<int32_t>({3, std::nullopt, std::nullopt, 10});
+  verify("find_first(c0, 2, x -> (x > 2))", makeRowVector({data}), expected);
+
+  expected =
+      makeNullableFlatVector<int64_t>({3, std::nullopt, std::nullopt, 2});
+  verify(
+      "find_first_index(c0, 2, x -> (x > 2))", makeRowVector({data}), expected);
+
+  // find_first x > 2 starting with 5-th element.
+  expected = makeNullableFlatVector<int32_t>(
+      {std::nullopt, std::nullopt, std::nullopt, 30});
+  verify("find_first(c0, 5, x -> (x > 2))", makeRowVector({data}), expected);
+
+  expected = makeNullableFlatVector<int64_t>(
+      {std::nullopt, std::nullopt, std::nullopt, 5});
+  verify(
+      "find_first_index(c0, 5, x -> (x > 2))", makeRowVector({data}), expected);
+
+  // first_first x > 0 from the end of the array.
+  expected =
+      makeNullableFlatVector<int32_t>({4, std::nullopt, std::nullopt, 40});
+  verify("find_first(c0, -1, x -> (x > 0))", makeRowVector({data}), expected);
+
+  expected =
+      makeNullableFlatVector<int64_t>({4, std::nullopt, std::nullopt, 7});
+  verify(
+      "find_first_index(c0, -1, x -> (x > 0))",
+      makeRowVector({data}),
+      expected);
+
+  // first_first x > 0 from the 2-nd to last element of the array.
+  expected =
+      makeNullableFlatVector<int32_t>({3, std::nullopt, std::nullopt, 30});
+  verify("find_first(c0, -2, x -> (x > 0))", makeRowVector({data}), expected);
+
+  expected =
+      makeNullableFlatVector<int64_t>({3, std::nullopt, std::nullopt, 5});
+  verify(
+      "find_first_index(c0, -2, x -> (x > 0))",
+      makeRowVector({data}),
+      expected);
 }
 
-TEST_F(FindFirstTest, errors) {
+TEST_F(FindFirstTest, firstMatchIsNull) {
   auto data = makeArrayVectorFromJson<int32_t>({
+      "[1, null, 2]",
+  });
+
+  findFirstFails(data, "x is null", "find_first found NULL as the first match");
+}
+
+TEST_F(FindFirstTest, predicateFailures) {
+  auto data = makeRowVector({makeArrayVectorFromJson<int32_t>({
       "[1, 2, 3, 0]",
       "[-1, 3, 0, 5]",
       "[5, 6, 7, 0]",
-  });
+  })});
+
+  VELOX_ASSERT_THROW(
+      evaluate("find_first(c0, x -> (10 / x > 2))", data), "division by zero");
+  VELOX_ASSERT_THROW(
+      evaluate("find_first(c0, 2, x -> (10 / x > 2))", data),
+      "division by zero");
+  VELOX_ASSERT_THROW(
+      evaluate("find_first_index(c0, x -> (10 / x > 2))", data),
+      "division by zero");
+  VELOX_ASSERT_THROW(
+      evaluate("find_first_index(c0, 2, x -> (10 / x > 2))", data),
+      "division by zero");
 
   VectorPtr expected = makeNullableFlatVector<int32_t>({
       1,
@@ -150,19 +211,30 @@ TEST_F(FindFirstTest, errors) {
       std::nullopt,
   });
 
-  findFirstFails(data, "10 / x > 2", "division by zero");
-  findFirst(data, "try(10 / x) > 2", expected);
-  tryFindFirst(data, "10 / x > 2", expected);
+  verify("find_first(c0, x -> (try(10 / x) > 2))", data, expected);
+  verify("try(find_first(c0, x -> (10 / x > 2)))", data, expected);
+
+  expected = makeNullableFlatVector<int32_t>({
+      2,
+      3,
+      std::nullopt,
+  });
+  verify("find_first(c0, -3, x -> (10 / x > 2))", data, expected);
 
   expected = makeNullableFlatVector<int64_t>({
       1,
       2,
       std::nullopt,
   });
+  verify("find_first_index(c0, x -> (try(10 / x) > 2))", data, expected);
+  verify("try(find_first_index(c0, x -> (10 / x > 2)))", data, expected);
 
-  findFirstIndexFails(data, "10 / x > 2", "division by zero");
-  findFirstIndex(data, "try(10 / x) > 2", expected);
-  tryFindFirstIndex(data, "10 / x > 2", expected);
+  expected = makeNullableFlatVector<int64_t>({
+      2,
+      2,
+      std::nullopt,
+  });
+  verify("find_first_index(c0, -3, x -> (10 / x > 2))", data, expected);
 }
 
 } // namespace

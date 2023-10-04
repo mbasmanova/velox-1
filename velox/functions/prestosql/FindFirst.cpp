@@ -53,11 +53,15 @@ class FindFirstFunctionBase : public exec::VectorFunction {
   //
   // @param rows Rows in 'flatArray' vector to process.
   // @param flatArray Flat array vector with possibly encoded elements.
+  // @param startIndex Optional vector of starting indices. These are 1-based
+  // and if negative indicate that the search for first matching element should
+  // proceed in reverse. This vector may not be flat.
   // @param predicates FunctionVector holding the predicate expressions.
   template <typename THit, typename TMiss>
   void doApply(
       const SelectivityVector& rows,
       const ArrayVectorPtr& flatArray,
+      const VectorPtr& startIndex,
       FunctionVector& predicates,
       exec::EvalCtx& context,
       THit onHit,
@@ -65,18 +69,27 @@ class FindFirstFunctionBase : public exec::VectorFunction {
     const auto* rawOffsets = flatArray->rawOffsets();
     const auto* rawSizes = flatArray->rawSizes();
 
-    std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
+    const std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
     const auto numElements = flatArray->elements()->size();
 
     VectorPtr matchBits;
     exec::LocalDecodedVector bitsDecoder(context);
+
+    // Adjust offsets and sizes according to specified start indices.
+    StartIndexProcessor startIndexProcessor;
+    if (startIndex != nullptr) {
+      startIndexProcessor.process(
+          startIndex, rows, rawOffsets, rawSizes, context);
+      rawOffsets = startIndexProcessor.adjustedOffsets->as<vector_size_t>();
+      rawSizes = startIndexProcessor.adjustedSizes->as<vector_size_t>();
+    }
 
     // Loop over lambda functions and apply these to elements of the base array,
     // in most cases there will be only one function and the loop will run once.
     auto it = predicates.iterator(&rows);
     while (auto entry = it.next()) {
       auto elementRows =
-          toElementRows<ArrayVector>(numElements, *entry.rows, flatArray.get());
+          toElementRows(numElements, *entry.rows, rawOffsets, rawSizes);
       auto wrapCapture = toWrapCapture<ArrayVector>(
           numElements, entry.callable, *entry.rows, flatArray);
 
@@ -108,6 +121,86 @@ class FindFirstFunctionBase : public exec::VectorFunction {
   }
 
  private:
+  // Adjusts offset and sizes to take into account custom start index.
+  // For example, given an array with offset 10, size 20 and start index 3 the
+  // new offset and size are 12 and 18. Given the same array and start index
+  // -5, the new offset and size are 25, -16. The negative size will be used
+  // later to loop over array in reverse.
+  struct StartIndexProcessor {
+    BufferPtr adjustedOffsets;
+    BufferPtr adjustedSizes;
+
+    void process(
+        const VectorPtr& startIndex,
+        const SelectivityVector& rows,
+        const vector_size_t* rawOffsets,
+        const vector_size_t* rawSizes,
+        exec::EvalCtx& context) {
+      VELOX_CHECK_NOT_NULL(startIndex);
+
+      exec::LocalDecodedVector startIndexDecoder(context, *startIndex, rows);
+
+      adjustedOffsets = allocateIndices(rows.end(), context.pool());
+      auto* rawAdjustedOffsets = adjustedOffsets->asMutable<vector_size_t>();
+
+      adjustedSizes = allocateIndices(rows.end(), context.pool());
+      auto* rawAdjustedSizes = adjustedSizes->asMutable<vector_size_t>();
+
+      rows.applyToSelected([&](auto row) {
+        if (startIndexDecoder->isNullAt(row)) {
+          rawAdjustedOffsets[row] = 0;
+          rawAdjustedSizes[row] = 0;
+        } else {
+          const auto offset = rawOffsets[row];
+          const auto size = rawSizes[row];
+          const auto start = startIndexDecoder->valueAt<int64_t>(row);
+          if (start > size || start < -size) {
+            rawAdjustedOffsets[row] = 0;
+            rawAdjustedSizes[row] = 0;
+          } else if (start == 0) {
+            rawAdjustedOffsets[row] = 0;
+            rawAdjustedSizes[row] = 0;
+
+            try {
+              VELOX_USER_FAIL("SQL array indices start at 1. Got 0.");
+            } catch (const VeloxUserError& exception) {
+              context.setVeloxExceptionError(row, std::current_exception());
+            }
+          } else if (start > 0) {
+            rawAdjustedOffsets[row] = offset + (start - 1);
+            rawAdjustedSizes[row] = size - (start - 1);
+          } else {
+            // start is negative.
+            rawAdjustedOffsets[row] = offset + size + start;
+            rawAdjustedSizes[row] = -(size + start + 1);
+          }
+        }
+      });
+    }
+  };
+
+  static SelectivityVector toElementRows(
+      vector_size_t numElements,
+      const SelectivityVector& arrayRows,
+      const vector_size_t* rawOffsets,
+      const vector_size_t* rawSizes) {
+    SelectivityVector elementRows(numElements, false);
+
+    arrayRows.applyToSelected([&](auto arrayRow) {
+      const auto offset = rawOffsets[arrayRow];
+      const auto size = rawSizes[arrayRow];
+
+      if (size > 0) {
+        elementRows.setValidRange(offset, offset + size, true);
+      } else {
+        elementRows.setValidRange(offset + 1 + size, offset + 1, true);
+      }
+    });
+    elementRows.updateBounds();
+
+    return elementRows;
+  }
+
   static FOLLY_ALWAYS_INLINE std::optional<std::exception_ptr> getOptionalError(
       const ErrorVectorPtr& errors,
       vector_size_t row) {
@@ -121,6 +214,9 @@ class FindFirstFunctionBase : public exec::VectorFunction {
 
   // Returns an index of the first matching element or std::nullopt if no
   // element matches or there was an error evaluating the predicate.
+  //
+  // @param size Number of elements to check starting with 'offset'. If 'size'
+  // is negative, elements are processed backwards: offset, offset - 1, etc.
   std::optional<vector_size_t> findFirstMatch(
       exec::EvalCtx& context,
       vector_size_t arrayRow,
@@ -128,8 +224,9 @@ class FindFirstFunctionBase : public exec::VectorFunction {
       vector_size_t size,
       const ErrorVectorPtr& elementErrors,
       const exec::LocalDecodedVector& matchDecoder) const {
-    for (auto i = 0; i < size; ++i) {
-      auto index = offset + i;
+    const auto step = size > 0 ? 1 : -1;
+    for (auto i = offset; i != offset + size; i += step) {
+      auto index = i;
       if (auto error = getOptionalError(elementErrors, index)) {
         // Report first error to match Presto's implementation.
         context.setError(arrayRow, error.value());
@@ -155,6 +252,8 @@ class FindFirstFunction : public FindFirstFunctionBase {
       exec::EvalCtx& context,
       VectorPtr& result) const override {
     auto flatArray = prepareInputArray(args[0], rows, context);
+    auto* predicateVector = args.back()->asUnchecked<FunctionVector>();
+    auto startIndexVector = (args.size() == 3 ? args[1] : nullptr);
 
     // Collect indices of the first matching elements or NULLs if no match or
     // error.
@@ -167,7 +266,8 @@ class FindFirstFunction : public FindFirstFunctionBase {
     doApply(
         rows,
         flatArray,
-        *args[1]->asUnchecked<FunctionVector>(),
+        startIndexVector,
+        *predicateVector,
         context,
         [&](vector_size_t row, vector_size_t firstMatchingIndex) {
           if (flatArray->elements()->isNullAt(firstMatchingIndex)) {
@@ -205,13 +305,17 @@ class FindFirstIndexFunction : public FindFirstFunctionBase {
     auto flatArray = prepareInputArray(args[0], rows, context);
     const auto* rawOffsets = flatArray->rawOffsets();
 
+    auto* predicateVector = args.back()->asUnchecked<FunctionVector>();
+    auto startIndexVector = (args.size() == 3 ? args[1] : nullptr);
+
     context.ensureWritable(rows, BIGINT(), result);
     auto flatResult = result->asFlatVector<int64_t>();
 
     doApply(
         rows,
         flatArray,
-        *args[1]->asUnchecked<FunctionVector>(),
+        startIndexVector,
+        *predicateVector,
         context,
         [&](vector_size_t row, vector_size_t firstMatchingIndex) {
           // Convert zero-based index of a row in the elements vector into a
@@ -223,23 +327,43 @@ class FindFirstIndexFunction : public FindFirstFunctionBase {
 };
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> valueSignatures() {
-  // array(T), function(T, boolean) -> T
-  return {exec::FunctionSignatureBuilder()
-              .typeVariable("T")
-              .returnType("T")
-              .argumentType("array(T)")
-              .argumentType("function(T, boolean)")
-              .build()};
+  return {
+      // array(T), function(T, boolean) -> T
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .returnType("T")
+          .argumentType("array(T)")
+          .argumentType("function(T, boolean)")
+          .build(),
+      // array(T), bigint, function(T, boolean) -> T
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .returnType("T")
+          .argumentType("array(T)")
+          .argumentType("bigint")
+          .argumentType("function(T, boolean)")
+          .build(),
+  };
 }
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> indexSignatures() {
-  // array(T), function(T, boolean) -> bigint
-  return {exec::FunctionSignatureBuilder()
-              .typeVariable("T")
-              .returnType("bigint")
-              .argumentType("array(T)")
-              .argumentType("function(T, boolean)")
-              .build()};
+  return {
+      // array(T), function(T, boolean) -> bigint
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .returnType("bigint")
+          .argumentType("array(T)")
+          .argumentType("function(T, boolean)")
+          .build(),
+      // array(T), bigint, function(T, boolean) -> bigint
+      exec::FunctionSignatureBuilder()
+          .typeVariable("T")
+          .returnType("bigint")
+          .argumentType("array(T)")
+          .argumentType("bigint")
+          .argumentType("function(T, boolean)")
+          .build(),
+  };
 }
 
 } // namespace
