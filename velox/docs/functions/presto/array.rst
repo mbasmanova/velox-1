@@ -209,6 +209,13 @@ Array Functions
         SELECT filter(ARRAY [5, -6, NULL, 7], x -> x > 0); -- [5, 7]
         SELECT filter(ARRAY [5, NULL, 7, NULL], x -> x IS NOT NULL); -- [5, 7]
 
+.. function:: find_first(array(T), function(T,boolean)) -> T
+
+    Returns the first element of ``array`` that matches the predicate.
+    Returns ``NULL`` if no element matches the predicate.
+    Throws if the first matching element is NULL to avoid ambiguous results
+    for no-match and first-match-is-null cases.
+
 .. function:: flatten(array(array(T))) -> array(T)
 
     Flattens an ``array(array(T))`` to an ``array(T)`` by concatenating the contained arrays.
