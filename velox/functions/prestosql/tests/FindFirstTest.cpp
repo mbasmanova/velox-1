@@ -32,6 +32,18 @@ class FindFirstTest : public functions::test::FunctionBaseTest {
     velox::test::assertEqualVectors(expected, result);
   }
 
+  void findFirstIndex(
+      const VectorPtr& input,
+      const std::string& lambda,
+      const VectorPtr& expected) {
+    const std::string expr =
+        fmt::format("find_first_index(c0, x -> ({}))", lambda);
+
+    SCOPED_TRACE(expr);
+    auto result = evaluate(expr, makeRowVector({input}));
+    velox::test::assertEqualVectors(expected, result);
+  }
+
   void tryFindFirst(
       const VectorPtr& input,
       const std::string& lambda,
@@ -44,11 +56,34 @@ class FindFirstTest : public functions::test::FunctionBaseTest {
     velox::test::assertEqualVectors(expected, result);
   }
 
+  void tryFindFirstIndex(
+      const VectorPtr& input,
+      const std::string& lambda,
+      const VectorPtr& expected) {
+    const std::string expr =
+        fmt::format("try(find_first_index(c0, x -> ({})))", lambda);
+
+    SCOPED_TRACE(expr);
+    auto result = evaluate(expr, makeRowVector({input}));
+    velox::test::assertEqualVectors(expected, result);
+  }
+
   void findFirstFails(
       const VectorPtr& input,
       const std::string& lambda,
       const std::string& errorMessage) {
     const std::string expr = fmt::format("find_first(c0, x -> ({}))", lambda);
+
+    SCOPED_TRACE(expr);
+    VELOX_ASSERT_THROW(evaluate(expr, makeRowVector({input})), errorMessage);
+  }
+
+  void findFirstIndexFails(
+      const VectorPtr& input,
+      const std::string& lambda,
+      const std::string& errorMessage) {
+    const std::string expr =
+        fmt::format("find_first_index(c0, x -> ({}))", lambda);
 
     SCOPED_TRACE(expr);
     VELOX_ASSERT_THROW(evaluate(expr, makeRowVector({input})), errorMessage);
@@ -66,7 +101,7 @@ TEST_F(FindFirstTest, basic) {
       "[null, null, null]",
   });
 
-  auto expected = makeNullableFlatVector<int32_t>({
+  VectorPtr expected = makeNullableFlatVector<int32_t>({
       std::nullopt,
       2,
       3,
@@ -78,6 +113,28 @@ TEST_F(FindFirstTest, basic) {
 
   findFirst(data, "x > 1", expected);
   findFirstFails(data, "x is null", "find_first found NULL as the first match");
+
+  expected = makeNullableFlatVector<int64_t>({
+      std::nullopt,
+      2,
+      4,
+      1,
+      std::nullopt,
+      4,
+      std::nullopt,
+  });
+  findFirstIndex(data, "x > 1", expected);
+
+  expected = makeNullableFlatVector<int64_t>({
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      1,
+      1,
+  });
+  findFirstIndex(data, "x is null", expected);
 }
 
 TEST_F(FindFirstTest, errors) {
@@ -87,7 +144,7 @@ TEST_F(FindFirstTest, errors) {
       "[5, 6, 7, 0]",
   });
 
-  auto expected = makeNullableFlatVector<int32_t>({
+  VectorPtr expected = makeNullableFlatVector<int32_t>({
       1,
       3,
       std::nullopt,
@@ -96,6 +153,16 @@ TEST_F(FindFirstTest, errors) {
   findFirstFails(data, "10 / x > 2", "division by zero");
   findFirst(data, "try(10 / x) > 2", expected);
   tryFindFirst(data, "10 / x > 2", expected);
+
+  expected = makeNullableFlatVector<int64_t>({
+      1,
+      2,
+      std::nullopt,
+  });
+
+  findFirstIndexFails(data, "10 / x > 2", "division by zero");
+  findFirstIndex(data, "try(10 / x) > 2", expected);
+  tryFindFirstIndex(data, "10 / x > 2", expected);
 }
 
 } // namespace

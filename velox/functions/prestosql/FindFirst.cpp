@@ -20,7 +20,7 @@
 namespace facebook::velox::functions {
 namespace {
 
-class FindFirstFunction : public exec::VectorFunction {
+class FindFirstFunctionBase : public exec::VectorFunction {
  public:
   bool isDefaultNullBehavior() const override {
     // find_first function is null preserving for the array argument, but
@@ -31,36 +31,49 @@ class FindFirstFunction : public exec::VectorFunction {
     return false;
   }
 
-  void apply(
+ protected:
+  ArrayVectorPtr prepareInputArray(
+      const VectorPtr& input,
       const SelectivityVector& rows,
-      std::vector<VectorPtr>& args,
-      const TypePtr& /*outputType*/,
-      exec::EvalCtx& context,
-      VectorPtr& result) const override {
-    exec::LocalDecodedVector arrayDecoder(context, *args[0], rows);
+      exec::EvalCtx& context) const {
+    exec::LocalDecodedVector arrayDecoder(context, *input, rows);
     auto& decodedArray = *arrayDecoder.get();
 
-    auto flatArray = flattenArray(rows, args[0], decodedArray);
-    auto* rawOffsets = flatArray->rawOffsets();
-    auto* rawSizes = flatArray->rawSizes();
+    return flattenArray(rows, input, decodedArray);
+  }
+
+  // Evaluates predicate on all elements of the array and identifies the first
+  // matching element.
+  //
+  // @tparam THit Called when first matching element is found. Receives array
+  // index in the flatArray vector and an index of the first matching element in
+  // flatArray->elements() vector.
+  // @tparam TMiss Called when no matching element is found. Receives array
+  // index in the flatArray vector.
+  //
+  // @param rows Rows in 'flatArray' vector to process.
+  // @param flatArray Flat array vector with possibly encoded elements.
+  // @param predicates FunctionVector holding the predicate expressions.
+  template <typename THit, typename TMiss>
+  void doApply(
+      const SelectivityVector& rows,
+      const ArrayVectorPtr& flatArray,
+      FunctionVector& predicates,
+      exec::EvalCtx& context,
+      THit onHit,
+      TMiss onMiss) const {
+    const auto* rawOffsets = flatArray->rawOffsets();
+    const auto* rawSizes = flatArray->rawSizes();
 
     std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
     const auto numElements = flatArray->elements()->size();
-
-    // Collect indices of the first matching elements or NULLs if no match or
-    // error.
-    BufferPtr resultIndices = allocateIndices(rows.end(), context.pool());
-    auto* rawResultIndices = resultIndices->asMutable<vector_size_t>();
-
-    BufferPtr resultNulls = nullptr;
-    uint64_t* rawResultNulls = nullptr;
 
     VectorPtr matchBits;
     exec::LocalDecodedVector bitsDecoder(context);
 
     // Loop over lambda functions and apply these to elements of the base array,
     // in most cases there will be only one function and the loop will run once.
-    auto it = args[1]->asUnchecked<FunctionVector>()->iterator(&rows);
+    auto it = predicates.iterator(&rows);
     while (auto entry = it.next()) {
       auto elementRows =
           toElementRows<ArrayVector>(numElements, *entry.rows, flatArray.get());
@@ -84,23 +97,14 @@ class FindFirstFunction : public exec::VectorFunction {
                 row,
                 rawOffsets[row],
                 rawSizes[row],
-                flatArray->elements(),
                 elementErrors,
                 bitsDecoder)) {
-          rawResultIndices[row] = firstMatchingIndex.value();
+          onHit(row, firstMatchingIndex.value());
         } else {
-          if (rawResultNulls == nullptr) {
-            resultNulls = allocateNulls(rows.end(), context.pool());
-            rawResultNulls = resultNulls->asMutable<uint64_t>();
-          }
-          bits::setNull(rawResultNulls, row);
+          onMiss(row);
         }
       });
     }
-
-    auto localResult = BaseVector::wrapInDictionary(
-        resultNulls, resultIndices, rows.end(), flatArray->elements());
-    context.moveOrCopyResult(localResult, rows, result);
   }
 
  private:
@@ -116,14 +120,12 @@ class FindFirstFunction : public exec::VectorFunction {
   }
 
   // Returns an index of the first matching element or std::nullopt if no
-  // element matches or first matching element is null or there was an error
-  // evaluating the predicate.
+  // element matches or there was an error evaluating the predicate.
   std::optional<vector_size_t> findFirstMatch(
       exec::EvalCtx& context,
       vector_size_t arrayRow,
       vector_size_t offset,
       vector_size_t size,
-      const VectorPtr& elements,
       const ErrorVectorPtr& elementErrors,
       const exec::LocalDecodedVector& matchDecoder) const {
     for (auto i = 0; i < size; ++i) {
@@ -135,16 +137,7 @@ class FindFirstFunction : public exec::VectorFunction {
       }
 
       if (!matchDecoder->isNullAt(index) &&
-          matchDecoder->valueAt<bool>(index) == true) {
-        if (elements->isNullAt(index)) {
-          try {
-            VELOX_USER_FAIL("find_first found NULL as the first match");
-          } catch (const VeloxUserError& exception) {
-            context.setVeloxExceptionError(arrayRow, std::current_exception());
-          }
-          return std::nullopt;
-        }
-
+          matchDecoder->valueAt<bool>(index)) {
         return index;
       }
     }
@@ -153,7 +146,83 @@ class FindFirstFunction : public exec::VectorFunction {
   }
 };
 
-std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
+class FindFirstFunction : public FindFirstFunctionBase {
+ public:
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& /*outputType*/,
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
+    auto flatArray = prepareInputArray(args[0], rows, context);
+
+    // Collect indices of the first matching elements or NULLs if no match or
+    // error.
+    BufferPtr resultIndices = allocateIndices(rows.end(), context.pool());
+    auto* rawResultIndices = resultIndices->asMutable<vector_size_t>();
+
+    BufferPtr resultNulls = nullptr;
+    uint64_t* rawResultNulls = nullptr;
+
+    doApply(
+        rows,
+        flatArray,
+        *args[1]->asUnchecked<FunctionVector>(),
+        context,
+        [&](vector_size_t row, vector_size_t firstMatchingIndex) {
+          if (flatArray->elements()->isNullAt(firstMatchingIndex)) {
+            try {
+              VELOX_USER_FAIL("find_first found NULL as the first match");
+            } catch (const VeloxUserError& exception) {
+              context.setVeloxExceptionError(row, std::current_exception());
+            }
+          } else {
+            rawResultIndices[row] = firstMatchingIndex;
+          }
+        },
+        [&](vector_size_t row) {
+          if (rawResultNulls == nullptr) {
+            resultNulls = allocateNulls(rows.end(), context.pool());
+            rawResultNulls = resultNulls->asMutable<uint64_t>();
+          }
+          bits::setNull(rawResultNulls, row);
+        });
+
+    auto localResult = BaseVector::wrapInDictionary(
+        resultNulls, resultIndices, rows.end(), flatArray->elements());
+    context.moveOrCopyResult(localResult, rows, result);
+  }
+};
+
+class FindFirstIndexFunction : public FindFirstFunctionBase {
+ public:
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& /*outputType*/,
+      exec::EvalCtx& context,
+      VectorPtr& result) const override {
+    auto flatArray = prepareInputArray(args[0], rows, context);
+    const auto* rawOffsets = flatArray->rawOffsets();
+
+    context.ensureWritable(rows, BIGINT(), result);
+    auto flatResult = result->asFlatVector<int64_t>();
+
+    doApply(
+        rows,
+        flatArray,
+        *args[1]->asUnchecked<FunctionVector>(),
+        context,
+        [&](vector_size_t row, vector_size_t firstMatchingIndex) {
+          // Convert zero-based index of a row in the elements vector into a
+          // 1-based index of the element in the array.
+          flatResult->set(row, 1 + firstMatchingIndex - rawOffsets[row]);
+        },
+        [&](vector_size_t row) { flatResult->setNull(row, true); });
+  }
+};
+
+std::vector<std::shared_ptr<exec::FunctionSignature>> valueSignatures() {
   // array(T), function(T, boolean) -> T
   return {exec::FunctionSignatureBuilder()
               .typeVariable("T")
@@ -163,11 +232,26 @@ std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
               .build()};
 }
 
+std::vector<std::shared_ptr<exec::FunctionSignature>> indexSignatures() {
+  // array(T), function(T, boolean) -> bigint
+  return {exec::FunctionSignatureBuilder()
+              .typeVariable("T")
+              .returnType("bigint")
+              .argumentType("array(T)")
+              .argumentType("function(T, boolean)")
+              .build()};
+}
+
 } // namespace
 
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_find_first,
-    signatures(),
+    valueSignatures(),
     std::make_unique<FindFirstFunction>());
+
+VELOX_DECLARE_VECTOR_FUNCTION(
+    udf_find_first_index,
+    indexSignatures(),
+    std::make_unique<FindFirstIndexFunction>());
 
 } // namespace facebook::velox::functions

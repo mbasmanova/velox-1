@@ -216,6 +216,11 @@ Array Functions
     Throws if the first matching element is NULL to avoid ambiguous results
     for no-match and first-match-is-null cases.
 
+.. function:: find_first_index(array(T), function(T,boolean)) -> BIGINT
+
+    Returns the 1-based index of the first element of ``array`` that matches the predicate.
+    Returns ``NULL`` if no such element exists.
+
 .. function:: flatten(array(array(T))) -> array(T)
 
     Flattens an ``array(array(T))`` to an ``array(T)`` by concatenating the contained arrays.
