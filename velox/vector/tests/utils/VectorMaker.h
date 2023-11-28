@@ -588,21 +588,68 @@ class VectorMaker {
         arrays.push_back(std::nullopt);
         continue;
       }
-
       std::vector<std::optional<T>> elements;
-      for (const auto& element : arrayObject) {
-        if (element.isNull()) {
-          // Null element.
-          elements.push_back(std::nullopt);
-        } else {
-          elements.push_back(detail::jsonValue<T>(element));
-        }
-      }
-
+      appendElementsFromJsonArray(arrayObject, elements);
       arrays.push_back(elements);
     }
-
     return arrayVectorNullable<T>(arrays, arrayType);
+  }
+
+  /// Creates an ArrayVector from a list of JSON arrays of arrays.
+  ///
+  /// JSON arrays of arrays can represent a null array, an empty array or array
+  /// with null elements.
+  ///
+  /// Examples:
+  /// [[1, 2], [2, 3, 4], [null, 7]]
+  /// [[1, 3, 7, 9], []]
+  /// [] - empty array of arrays
+  /// null - null array of arrays
+  /// [null] - array of null array
+  /// [[]]
+  ///
+  /// @param T Type of array elements.
+  /// @param jsonArrays A list of JSON arrays. JSON array cannot be an empty
+  /// string.
+  template <typename T>
+  ArrayVectorPtr nestedArrayVectorFromJson(
+      const std::vector<std::string>& jsonArrays,
+      const TypePtr& arrayType = ARRAY(CppToType<T>::create())) {
+    std::vector<std::optional<std::vector<std::optional<T>>>> baseVector;
+    std::vector<vector_size_t> offsets;
+    std::vector<vector_size_t> nulls;
+    const std::vector<std::optional<T>> empty;
+    int offset = 0;
+    for (auto i = 0; i < jsonArrays.size(); i++) {
+      const auto& jsonArray = jsonArrays.at(i);
+      VELOX_CHECK(!jsonArray.empty());
+      const folly::dynamic arraysObject = folly::parseJson(jsonArray);
+      offsets.push_back(offset);
+      if (arraysObject.isNull()) {
+        // Null array.
+        nulls.push_back(i);
+        continue;
+      }
+      if (arraysObject.size() == 0) {
+        // Empty nested array
+        baseVector.push_back(empty);
+        offset++;
+      } else {
+        for (const auto& nestedArray : arraysObject) {
+          if (nestedArray.isNull()) {
+            // Null nested array.
+            baseVector.push_back(std::nullopt);
+          } else {
+            std::vector<std::optional<T>> elements;
+            appendElementsFromJsonArray(nestedArray, elements);
+            baseVector.push_back(elements);
+          }
+        }
+      }
+      offset += arraysObject.size();
+    }
+    auto baseArrayVector = arrayVectorNullable<T>(baseVector, arrayType);
+    return arrayVector(offsets, baseArrayVector, nulls);
   }
 
   ArrayVectorPtr allNullArrayVector(
@@ -881,6 +928,19 @@ class VectorMaker {
       BufferPtr* nulls,
       BufferPtr* offsets,
       BufferPtr* sizes);
+
+  template <typename T>
+  void appendElementsFromJsonArray(
+      const folly::dynamic& arrayObject,
+      std::vector<std::optional<T>>& elements) {
+    for (const auto& element : arrayObject) {
+      if (element.isNull()) {
+        elements.push_back(std::nullopt);
+      } else {
+        elements.push_back(detail::jsonValue<T>(element));
+      }
+    }
+  }
 
   memory::MemoryPool* pool_;
 };
