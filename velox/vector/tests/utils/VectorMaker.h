@@ -630,20 +630,14 @@ class VectorMaker {
         nulls.push_back(i);
         continue;
       }
-      if (arraysObject.size() == 0) {
-        // Empty nested array
-        baseVector.push_back(empty);
-        offset++;
-      } else {
-        for (const auto& nestedArray : arraysObject) {
-          if (nestedArray.isNull()) {
-            // Null nested array.
-            baseVector.push_back(std::nullopt);
-          } else {
-            std::vector<std::optional<T>> elements;
-            appendElementsFromJsonArray(nestedArray, elements);
-            baseVector.push_back(elements);
-          }
+      for (const auto& nestedArray : arraysObject) {
+        if (nestedArray.isNull()) {
+          // Null nested array.
+          baseVector.push_back(std::nullopt);
+        } else {
+          std::vector<std::optional<T>> elements;
+          appendElementsFromJsonArray(nestedArray, elements);
+          baseVector.push_back(elements);
         }
       }
       offset += arraysObject.size();

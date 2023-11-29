@@ -475,7 +475,6 @@ TEST_F(VectorMakerTest, nestedArrayVectorFromJson) {
       {{std::nullopt, 7}},
       {{1, 3, 7, 9}},
       {{}},
-      {{}},
       {{std::nullopt}},
       {{1, 2, std::nullopt}},
       {{}},
@@ -499,7 +498,7 @@ TEST_F(VectorMakerTest, nestedArrayVectorFromJson) {
   EXPECT_EQ(2, arrayVector->sizeAt(1));
 
   // Empty inner array
-  EXPECT_EQ(1, arrayVector->sizeAt(2));
+  EXPECT_EQ(0, arrayVector->sizeAt(2));
   EXPECT_FALSE(arrayVector->isNullAt(2));
 
   // inner array with null
