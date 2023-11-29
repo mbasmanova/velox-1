@@ -47,7 +47,7 @@ TEST_F(ExpandTest, groupingSets) {
           .values({data})
           .expand(
               {{"k1",
-                "null as k2",
+                "null::bigint as k2",
                 "a",
                 "b",
                 "0 as group_id_0",
