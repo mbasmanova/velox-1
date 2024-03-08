@@ -27,6 +27,7 @@ add_executable(
   ChecksumAggregateTest.cpp
   CountAggregationTest.cpp
   CountIfAggregationTest.cpp
+  CountMinSketchTest.cpp
   CovarianceAggregationTest.cpp
   EntropyAggregationTest.cpp
   GeometricMeanTest.cpp
